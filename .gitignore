@@ -1,0 +1,5 @@
+node_modules/
+.pi-web/
+.DS_Store
+*.log
+.env

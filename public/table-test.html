@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>表格渲染测试</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+      padding: 20px;
+      height: auto;
+      min-height: 100vh;
+    }
+    .test-container {
+      max-width: 800px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+    .subtitle {
+      color: var(--text-tertiary);
+      margin-bottom: 30px;
+    }
+    .test-section {
+      margin-bottom: 40px;
+    }
+    .test-section h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-light);
+      padding-bottom: 8px;
+    }
+    .msg-content {
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>📊 表格渲染测试</h1>
+    <p class="subtitle">验证 pi Web 的 Markdown 表格渲染功能</p>
+
+    <!-- 测试 1: 基本表格 -->
+    <div class="test-section">
+      <h2>1. 基本表格</h2>
+      <div class="msg msg-assistant">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left">姓名</th>
+                  <th style="text-align:left">年龄</th>
+                  <th style="text-align:left">城市</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align:left">张三</td>
+                  <td style="text-align:left">28</td>
+                  <td style="text-align:left">北京</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">李四</td>
+                  <td style="text-align:left">35</td>
+                  <td style="text-align:left">上海</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">王五</td>
+                  <td style="text-align:left">22</td>
+                  <td style="text-align:left">广州</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试 2: 带对齐格式的表格 -->
+    <div class="test-section">
+      <h2>2. 对齐格式（左、中、右）</h2>
+      <div class="msg msg-assistant">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left">左对齐</th>
+                  <th style="text-align:center">居中</th>
+                  <th style="text-align:right">右对齐</th>
+                  <th style="text-align:right">数字</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align:left">苹果</td>
+                  <td style="text-align:center">水果</td>
+                  <td style="text-align:right">$1.99</td>
+                  <td style="text-align:right">100</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">香蕉</td>
+                  <td style="text-align:center">水果</td>
+                  <td style="text-align:right">$0.99</td>
+                  <td style="text-align:right">250</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">牛奶</td>
+                  <td style="text-align:center">乳制品</td>
+                  <td style="text-align:right">$3.49</td>
+                  <td style="text-align:right">75</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试 3: 长内容表格 -->
+    <div class="test-section">
+      <h2>3. 长内容（溢出滚动）</h2>
+      <div class="msg msg-assistant">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left">ID</th>
+                  <th style="text-align:left">描述</th>
+                  <th style="text-align:left">状态</th>
+                  <th style="text-align:left">备注</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align:left">1</td>
+                  <td style="text-align:left">这是一个很长的描述文本，用于测试表格单元格中的内容超出列宽时是否正常显示，以及表格是否能够正确进行水平滚动</td>
+                  <td style="text-align:left">✅ 已完成</td>
+                  <td style="text-align:left">无</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">2</td>
+                  <td style="text-align:left">短文本</td>
+                  <td style="text-align:left">⏳ 进行中</td>
+                  <td style="text-align:left">需要关注这个任务的进展情况，可能会影响到后续的排期和资源分配</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试 4: 同消息内表格+文本混合 -->
+    <div class="test-section">
+      <h2>4. 表格与文本混合</h2>
+      <div class="msg msg-assistant">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content">
+          <p>以下是项目进度表：</p>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left">项目</th>
+                  <th style="text-align:center">进度</th>
+                  <th style="text-align:right">截止日期</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align:left">前端开发</td>
+                  <td style="text-align:center">80%</td>
+                  <td style="text-align:right">2026-07-15</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">后端 API</td>
+                  <td style="text-align:center">60%</td>
+                  <td style="text-align:right">2026-07-20</td>
+                </tr>
+                <tr>
+                  <td style="text-align:left">数据库设计</td>
+                  <td style="text-align:center">100%</td>
+                  <td style="text-align:right">2026-07-01</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>总体进度良好，<strong>数据库设计</strong>已提前完成。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试 5: 空单元格表格 -->
+    <div class="test-section">
+      <h2>5. 空单元格</h2>
+      <div class="msg msg-assistant">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left">A</th>
+                  <th style="text-align:left">B</th>
+                  <th style="text-align:left">C</th>
+                  <th style="text-align:left">D</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align:left">有内容</td>
+                  <td style="text-align:left"></td>
+                  <td style="text-align:left">有内容</td>
+                  <td style="text-align:left"></td>
+                </tr>
+                <tr>
+                  <td style="text-align:left"></td>
+                  <td style="text-align:left"></td>
+                  <td style="text-align:left"></td>
+                  <td style="text-align:left">只有这里有</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试 6: Markdown 模拟渲染（用 JS） -->
+    <div class="test-section">
+      <h2>6. JS 动态渲染测试</h2>
+      <div class="msg msg-assistant" id="dynamicTest">
+        <div class="msg-avatar">P</div>
+        <div class="msg-content" id="dynamicContent">
+          <p>加载中...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 复制 app.js 中的 renderTable / renderInline / escapeHtml 函数来测试动态渲染
+    function escapeHtml(text) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      return text.replace(/[&<>"']/g, c => map[c]);
+    }
+
+    function renderInline(text) {
+      let result = escapeHtml(text);
+      result = result.replace(/`([^`]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
+      result = result.replace(/\*\*([^*]+)\*\*/g, (_, t) => `<strong>${escapeHtml(t)}</strong>`);
+      result = result.replace(/\*([^*]+)\*/g, (_, t) => `<em>${escapeHtml(t)}</em>`);
+      return result;
+    }
+
+    function renderTable(lines) {
+      if (!lines || lines.length < 2) return '';
+
+      const delimiterCells = lines[1].split('|').filter(c => c.trim());
+      const alignments = delimiterCells.map(cell => {
+        const trimmed = cell.trim();
+        if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+        if (trimmed.endsWith(':')) return 'right';
+        return 'left';
+      });
+
+      let html = '<div class="table-wrapper"><table>';
+
+      const headerCells = lines[0].split('|').filter(c => c.trim());
+      html += '<thead><tr>';
+      headerCells.forEach((cell, i) => {
+        const align = alignments[i] || 'left';
+        html += `<th style="text-align:${align}">${renderInline(cell.trim())}</th>`;
+      });
+      html += '</tr></thead>';
+
+      if (lines.length > 2) {
+        html += '<tbody>';
+        for (let r = 2; r < lines.length; r++) {
+          const cells = lines[r].split('|').filter(c => c.trim());
+          if (cells.length === 0) continue;
+          html += '<tr>';
+          cells.forEach((cell, i) => {
+            const align = alignments[i] || 'left';
+            html += `<td style="text-align:${align}">${renderInline(cell.trim())}</td>`;
+          });
+          html += '</tr>';
+        }
+        html += '</tbody>';
+      }
+
+      html += '</table></div>';
+      return html;
+    }
+
+    function renderMarkdown(text) {
+      if (!text) return '';
+
+      const codeBlocks = [];
+      let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+        const idx = codeBlocks.length;
+        codeBlocks.push({ lang: lang || '', code: code.trimEnd() });
+        return `\x00CODEBLOCK${idx}\x00`;
+      });
+
+      const tables = [];
+      processed = processed.replace(
+        /^\|(.+)\|\n\|([-:| ]+)\|\n(?:\|.+\|\n?)+/gm,
+        (match) => {
+          const idx = tables.length;
+          const lines = match.split('\n').filter(l => l.trim());
+          tables.push(lines);
+          return `\x00TABLE${idx}\x00`;
+        }
+      );
+
+      processed = processed.replace(/`([^`]+)`/g, (_, code) =>
+        `<code>${escapeHtml(code)}</code>`
+      );
+      processed = processed.replace(/\*\*([^*]+)\*\*/g, (_, text) =>
+        `<strong>${escapeHtml(text)}</strong>`
+      );
+      processed = processed.replace(/\*([^*]+)\*/g, (_, text) =>
+        `<em>${escapeHtml(text)}</em>`
+      );
+      processed = processed.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+      processed = processed.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+      processed = processed.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+      processed = processed.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+      processed = processed.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+      processed = processed.replace(/^---$/gm, '<hr>');
+      processed = processed.replace(/^[*-] (.+)$/gm, '<li>$1</li>');
+      processed = processed.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+      processed = processed.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+      processed = processed.replace(/((?:<li>.*<\/li>\n?)+)/g, (match) => {
+        if (match.includes('<ul>')) return match;
+        return `<ol>${match}</ol>`;
+      });
+      processed = processed.replace(/\n\n+/g, '</p><p>');
+      processed = '<p>' + processed + '</p>';
+      processed = processed.replace(/<p>\s*<\/p>/g, '');
+      processed = processed.replace(/<(h[1-6]|ul|ol|blockquote|pre|hr)[^>]*><\/p>/g, '<$1>');
+      processed = processed.replace(/<p><\/(h[1-6]|ul|ol|blockquote)>/g, '</$1>');
+      processed = processed.replace(/<p>\x00TABLE(\d+)\x00<\/p>/g, '\x00TABLE$1\x00');
+
+      processed = processed.replace(/\x00TABLE(\d+)\x00/g, (_, idx) => {
+        const lines = tables[parseInt(idx)];
+        return renderTable(lines);
+      });
+
+      processed = processed.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => {
+        const block = codeBlocks[parseInt(idx)];
+        const header = block.lang
+          ? `<div class="code-header"><span>${escapeHtml(block.lang)}</span><button class="copy-btn" data-code="${encodeURIComponent(block.code)}">Copy</button></div>`
+          : '';
+        return `${header}<pre><code>${escapeHtml(block.code)}</code></pre>`;
+      });
+
+      return processed;
+    }
+
+    // --- 动态测试 ---
+    const mdTable = `
+| 名称 | 类型 | 价格 | 库存 |
+|:---|:---:|---:|---:|
+| 苹果 | 水果 | ¥5.50 | 100 |
+| **香蕉** | 水果 | ¥3.20 | 250 |
+| \`牛奶\` | 乳制品 | ¥12.00 | 75 |
+| 面包 | 烘焙 | ¥8.90 | *缺货* |
+`;
+
+    document.getElementById('dynamicContent').innerHTML = renderMarkdown(mdTable.trim());
+  </script>
+</body>
+</html>
