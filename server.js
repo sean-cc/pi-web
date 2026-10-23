@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
@@ -28,6 +29,44 @@ try {
 } catch (err) {
   console.warn(`Could not create upload directory ${UPLOAD_DIR}: ${err.message}`);
 }
+
+// ── Keep-awake (macOS) ─────────────────────────────────────────────────────
+// Long agent turns can outlive the idle sleep timer and lose their network
+// connections. While at least one prompt stream is active, hold a caffeinate
+// assertion so macOS stays awake. Set PI_WEB_KEEP_AWAKE=0 to disable.
+const KEEP_AWAKE_ENABLED = process.platform === 'darwin' && process.env.PI_WEB_KEEP_AWAKE !== '0';
+let activeKeepAwakeTasks = 0;
+let keepAwakeProcess = null;
+
+function startKeepAwake() {
+  if (!KEEP_AWAKE_ENABLED) return;
+  activeKeepAwakeTasks += 1;
+  if (keepAwakeProcess) return;
+
+  try {
+    // -i: prevent idle system sleep, -m: prevent disk sleep, -s: prevent
+    // system sleep while on AC power.
+    keepAwakeProcess = spawn('caffeinate', ['-ims'], { stdio: 'ignore' });
+    keepAwakeProcess.on('error', () => { keepAwakeProcess = null; });
+    keepAwakeProcess.on('exit', () => { keepAwakeProcess = null; });
+  } catch {
+    keepAwakeProcess = null;
+  }
+}
+
+function stopKeepAwake() {
+  if (!KEEP_AWAKE_ENABLED) return;
+  activeKeepAwakeTasks = Math.max(0, activeKeepAwakeTasks - 1);
+  if (activeKeepAwakeTasks > 0 || !keepAwakeProcess) return;
+
+  const proc = keepAwakeProcess;
+  keepAwakeProcess = null;
+  try { proc.kill('SIGTERM'); } catch {}
+}
+
+process.on('exit', () => {
+  try { keepAwakeProcess?.kill('SIGTERM'); } catch {}
+});
 
 // ── Auth & Model Registry ──────────────────────────────────────────────────
 const authStorage = AuthStorage.create();
@@ -840,11 +879,13 @@ const server = http.createServer(async (req, res) => {
         promptOptions.streamingBehavior = body.streamingBehavior || 'steer';
       }
 
+      startKeepAwake();
       await session.prompt(message, promptOptions);
       send('done', {});
     } catch (err) {
       send('error', { error: err.message });
     } finally {
+      stopKeepAwake();
       unsub();
       if (!res.writableEnded) res.end();
     }

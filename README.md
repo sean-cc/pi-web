@@ -68,6 +68,35 @@ piWeb/
 └── package.json
 ```
 
+## Keep Awake During Long Tasks
+
+On macOS, the server automatically holds a `caffeinate` assertion while a prompt
+stream is active, so an idle Mac does not suspend the agent mid-task:
+
+```bash
+npm start
+```
+
+To keep the whole server awake instead (not just active prompts):
+
+```bash
+npm run start:awake
+# equivalent to: caffeinate -ims node server.js
+```
+
+Or wrap the CLI agent directly:
+
+```bash
+caffeinate -i pi "long task..."
+```
+
+Disable the automatic behavior with `PI_WEB_KEEP_AWAKE=0`.
+
+**Lid closed:** `caffeinate` cannot prevent sleep when the MacBook lid is closed
+unless it is in clamshell mode (power connected + external display, depending on
+the model). For tasks that must survive a closed lid or travel, run pi on an
+always-on remote machine.
+
 ## Smoke Test
 
 A small end-to-end UI smoke test is included (requires Chrome/Chromium and Node 22+):
