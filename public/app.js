@@ -595,10 +595,56 @@ function isNearBottom() {
   return distance <= SCROLL_STICK_THRESHOLD;
 }
 
+let lastScrollTop = chatMessages.scrollTop;
+
 chatMessages.addEventListener('scroll', () => {
-  stickToBottom = isNearBottom();
+  const top = chatMessages.scrollTop;
+
+  // Only a genuine upward move means the reader is looking at earlier output.
+  // Deriving this from distance-to-bottom alone is racy: a burst of streamed
+  // content can grow the transcript before the programmatic scroll event is
+  // processed, making it look like the user scrolled away.
+  //
+  // A decrease that still ends at the bottom is not a user scroll-up: it is
+  // caused by collapsing a thinking/tool block, which shortens the transcript
+  // and clamps scrollTop. Keep following in that case.
+  const nearBottom = isNearBottom();
+  if (top < lastScrollTop - 1 && !nearBottom) {
+    stickToBottom = false;
+  } else if (nearBottom) {
+    stickToBottom = true;
+  }
+
+  lastScrollTop = top;
   updateScrollBottomButton();
   scheduleRulerUpdate();
+}, { passive: true });
+
+// Treat an upward wheel/touch gesture as intent immediately, before the scroll
+// event arrives. A stream delta landing between the gesture and the event must
+// not yank the viewport back down.
+chatMessages.addEventListener('wheel', (event) => {
+  if (event.deltaY < 0 && chatMessages.scrollTop > 0) {
+    stickToBottom = false;
+    updateScrollBottomButton();
+  }
+}, { passive: true });
+
+let lastTouchY = null;
+chatMessages.addEventListener('touchstart', (event) => {
+  lastTouchY = event.touches[0]?.clientY ?? null;
+}, { passive: true });
+chatMessages.addEventListener('touchmove', (event) => {
+  const y = event.touches[0]?.clientY;
+  // Dragging the finger down reveals earlier output.
+  if (chatMessages.scrollTop > 0 && lastTouchY !== null && y !== undefined && y > lastTouchY + 1) {
+    stickToBottom = false;
+    updateScrollBottomButton();
+  }
+  lastTouchY = y ?? null;
+}, { passive: true });
+chatMessages.addEventListener('touchend', () => {
+  lastTouchY = null;
 }, { passive: true });
 
 // force=true is for explicit jumps (session switch, sending a prompt) that
@@ -607,6 +653,10 @@ function scrollToBottom(force = false) {
   if (force) stickToBottom = true;
   if (!stickToBottom) return;
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  // A forced jump (session switch, sending a prompt) may land above the old
+  // scroll position when the new transcript is shorter. Keep the scroll
+  // handler from mistaking that for a user scroll-up.
+  if (force) lastScrollTop = chatMessages.scrollTop;
 }
 
 // ── Conversation timeline (right-hand ruler) ─────────────────────────────
@@ -616,6 +666,9 @@ let rulerTicks = [];
 let rulerRaf = 0;
 let rulerDragging = false;
 let hoveredTick = null;
+let rulerWindowOffset = 0;
+let rulerCurrentIndex = 0;
+const RULER_MIN_GAP = 9;
 
 function maxRulerScroll() {
   return Math.max(0, chatMessages.scrollHeight - chatMessages.clientHeight);
@@ -623,7 +676,7 @@ function maxRulerScroll() {
 
 // Show the jump-to-latest button whenever the reader is above the live edge.
 function updateScrollBottomButton() {
-  const show = maxRulerScroll() > 8 && !isNearBottom();
+  const show = maxRulerScroll() > 8 && !stickToBottom;
   btnScrollBottom.classList.toggle('hidden', !show);
 }
 
@@ -677,30 +730,75 @@ function refreshRuler() {
   const count = rulerTicks.length;
   const edgePadding = Math.min(10, trackHeight / 4);
   const usableHeight = Math.max(1, trackHeight - edgePadding * 2);
-  const step = count > 1 ? usableHeight / (count - 1) : 0;
 
-  let currentTick = rulerTicks[0] || null;
+  // `gap` never drops below RULER_MIN_GAP. Once the prompts no longer fit,
+  // the ruler becomes a scrolling window over a taller fixed-pitch stack
+  // instead of dropping ticks or squeezing them together.
+  const capacity = Math.max(2, Math.floor(usableHeight / RULER_MIN_GAP) + 1);
+  const scrollable = count > capacity;
+  const gap = scrollable
+    ? RULER_MIN_GAP
+    : (count > 1 ? usableHeight / (count - 1) : 0);
+  const totalHeight = scrollable
+    ? edgePadding * 2 + (count - 1) * RULER_MIN_GAP
+    : trackHeight;
 
-  rulerTicks.forEach((tick, index) => {
+  // Measure every prompt, then pick the one the reader is currently in.
+  rulerTicks.forEach((tick) => {
     const rect = tick.msgEl.getBoundingClientRect();
     tick.offset = Math.max(0, rect.top - containerRect.top + scrollTop);
-
-    const y = count > 1 ? edgePadding + index * step : trackHeight / 2;
-    tick.y = Math.max(1, Math.min(trackHeight - 1, y));
-    tick.el.style.top = `${tick.y}px`;
-
-    // The current prompt is the last one that started above the viewport.
-    if (tick.offset <= scrollTop + 2) currentTick = tick;
   });
 
+  let currentIndex = 0;
+  rulerTicks.forEach((tick, index) => {
+    // The current prompt is the last one that started above the viewport.
+    if (tick.offset <= scrollTop + 2) currentIndex = index;
+  });
   // At the very bottom the last prompt may sit below the viewport top; it is
   // still the one being followed.
-  if (maxScroll > 0 && scrollTop >= maxScroll - 2) {
-    currentTick = rulerTicks[rulerTicks.length - 1] || currentTick;
+  if (maxScroll > 0 && scrollTop >= maxScroll - 2) currentIndex = count - 1;
+  rulerCurrentIndex = currentIndex;
+
+  // Slide the window just enough to keep the reading position visible. This is
+  // what makes the ruler scroll with the conversation once it overflows.
+  if (scrollable) {
+    const focusScroll = scrollTop + chatMessages.clientHeight / 2;
+    let focusIndex = 0;
+    for (let i = 0; i < count; i++) {
+      if (rulerTicks[i].offset <= focusScroll) focusIndex = i;
+    }
+    // Interpolate between prompts so the window glides instead of jumping
+    // whenever a long reply is being read.
+    if (focusIndex < count - 1) {
+      const prevOffset = rulerTicks[focusIndex].offset;
+      const nextOffset = rulerTicks[focusIndex + 1].offset;
+      if (nextOffset > prevOffset) {
+        const progress = Math.max(0, Math.min(1, (focusScroll - prevOffset) / (nextOffset - prevOffset)));
+        focusIndex += progress;
+      }
+    }
+
+    const focusY = edgePadding + focusIndex * RULER_MIN_GAP;
+    const maxOffset = Math.max(0, totalHeight - trackHeight);
+    // Keep the reading position centred in the ruler window.
+    rulerWindowOffset = Math.max(0, Math.min(maxOffset, focusY - trackHeight / 2));
+  } else {
+    rulerWindowOffset = 0;
   }
 
+  rulerTicks.forEach((tick, index) => {
+    const stackY = count === 1 ? trackHeight / 2 : edgePadding + index * gap;
+    tick.y = stackY - rulerWindowOffset;
+    tick.el.style.top = `${tick.y}px`;
+  });
+
+  const currentTick = rulerTicks[currentIndex] || null;
   for (const tick of rulerTicks) {
     tick.el.classList.toggle('current', tick === currentTick);
+  }
+
+  if (hoveredTick && (hoveredTick.y < -8 || hoveredTick.y > trackHeight + 8)) {
+    hideRulerTip();
   }
 }
 
@@ -770,7 +868,10 @@ function nearestRulerTick(clientY) {
   const y = clientY - rect.top;
   let best = null;
   let bestDistance = Infinity;
+  const trackHeight = rect.height;
   for (const tick of rulerTicks) {
+    // Ignore ticks currently clipped outside the ruler window.
+    if (tick.y < -6 || tick.y > trackHeight + 6) continue;
     const distance = Math.abs(tick.y - y);
     if (distance < bestDistance) {
       best = tick;
@@ -780,12 +881,29 @@ function nearestRulerTick(clientY) {
   return best;
 }
 
-function jumpRulerTo(clientY) {
-  const tick = nearestRulerTick(clientY);
-  if (!tick) return;
+function jumpRulerTo(clientY, allowEdgeAdvance = false) {
+  const rect = rulerTrack.getBoundingClientRect();
+  let target = null;
+
+  // While dragging at the top/bottom edge, keep advancing through prompts so
+  // the whole (scrolled) ruler can be scrubbed without moving the mouse away.
+  if (allowEdgeAdvance && rulerTicks.length) {
+    const edge = 18;
+    const advance = 3;
+    if (clientY - rect.top < edge) {
+      target = rulerTicks[Math.max(0, rulerCurrentIndex - advance)];
+    } else if (clientY - rect.top > rect.height - edge) {
+      target = rulerTicks[Math.min(rulerTicks.length - 1, rulerCurrentIndex + advance)];
+    }
+  }
+
+  if (!target) target = nearestRulerTick(clientY);
+  if (!target) return;
+
+  rulerCurrentIndex = rulerTicks.indexOf(target);
   stickToBottom = false;
   hideRulerTip();
-  chatMessages.scrollTop = Math.min(tick.offset, maxRulerScroll());
+  chatMessages.scrollTop = Math.min(target.offset, maxRulerScroll());
   scheduleRulerUpdate();
 }
 
@@ -811,7 +929,7 @@ rulerTrack.addEventListener('pointerdown', (event) => {
 
 rulerTrack.addEventListener('pointermove', (event) => {
   if (rulerDragging) {
-    jumpRulerTo(event.clientY);
+    jumpRulerTo(event.clientY, true);
     return;
   }
   const tick = nearestRulerTick(event.clientY);
@@ -841,6 +959,7 @@ btnScrollBottom.addEventListener('wheel', (event) => {
 // Wheel over the ruler should still scroll the transcript.
 rulerTrack.addEventListener('wheel', (event) => {
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? chatMessages.clientHeight : 1;
+  if (event.deltaY < 0) stickToBottom = false;
   hideRulerTip();
   chatMessages.scrollTop += event.deltaY * unit;
   event.preventDefault();
@@ -1370,6 +1489,7 @@ function handleSSEEvent(type, data, ctx) {
       contentEl.appendChild(block);
       ctx.thinkingBlockEl = block;
       ctx.thinkingBodyEl = block.querySelector('.thinking-body');
+      scrollToBottom();
       break;
     }
 
@@ -1377,6 +1497,7 @@ function handleSSEEvent(type, data, ctx) {
       ctx.currentThinking += data.delta;
       if (ctx.thinkingBodyEl) {
         ctx.thinkingBodyEl.textContent = ctx.currentThinking;
+        scrollToBottom();
       }
       break;
     }
@@ -1412,6 +1533,7 @@ function handleSSEEvent(type, data, ctx) {
         isError: false,
         el: block,
       });
+      scrollToBottom();
       break;
     }
 
@@ -1480,6 +1602,7 @@ function handleSSEEvent(type, data, ctx) {
       ctx.activeToolBody = null;
       // The model now has the tool result and is working on the next step.
       showWorking(ctx);
+      scrollToBottom();
       break;
     }
 
@@ -1534,7 +1657,9 @@ function appendWorkingMessage() {
 }
 
 function showWorking(ctx) {
-  ctx?.workingEl?.classList.remove('hidden');
+  if (!ctx?.workingEl) return;
+  ctx.workingEl.classList.remove('hidden');
+  scrollToBottom();
 }
 
 function hideWorking(ctx) {

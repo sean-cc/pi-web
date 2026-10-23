@@ -263,6 +263,7 @@ body {
 .ruler-track {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   cursor: pointer;
   outline: none;
 }
