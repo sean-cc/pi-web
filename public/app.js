@@ -294,6 +294,11 @@ function appendMessage(msg) {
     });
   });
   const messageCopyBtn = el.querySelector('.msg-copy-btn');
+  if (messageCopyBtn) {
+    // Thinking-only and tool-only assistant steps have nothing useful to
+    // copy; keep the badge hidden until there is visible text.
+    messageCopyBtn.classList.toggle('hidden', !messageCopyText(msg));
+  }
   messageCopyBtn?.addEventListener('click', (event) => {
     event.stopPropagation();
     copyToClipboard(messageCopyText(msg)).then((ok) => {
@@ -1302,6 +1307,9 @@ function updateAssistantContent(contentEl, ctx) {
   });
 
   contentEl.innerHTML = html;
+  if (ctx.assistantMsg) ctx.assistantMsg.content = ctx.currentText;
+  const liveCopyBtn = contentEl.closest('.msg')?.querySelector('.msg-copy-btn');
+  if (liveCopyBtn) liveCopyBtn.classList.toggle('hidden', !ctx.currentText);
 
   // Restore the user's toggle state; newly rendered tools keep their default
   // (running tools open, completed tools closed).

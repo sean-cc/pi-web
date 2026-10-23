@@ -496,11 +496,27 @@ async function browserTests() {
   await wait(80);
   check(
     'message copy button copies the markdown',
-    copiedText === 'copy **me**' && copyBtn?.textContent === '✓',
+    copiedText === 'copy **me**' && copyBtn?.textContent === '✓' && !copyBtn?.classList.contains('hidden'),
     `copied=${copiedText} label=${copyBtn?.textContent}`,
   );
   api.state.messages.pop();
   copyEl.remove();
+
+  const emptyCopyMsg = {
+    id: 'copy_empty', role: 'assistant', content: '', thinking: 'reasoning only',
+    toolCalls: [{ id: 'copy_empty_tool', name: 'bash', input: {}, result: 'ok', isError: false }],
+    timestamp: new Date().toISOString(),
+  };
+  api.state.messages.push(emptyCopyMsg);
+  const emptyCopyEl = api.appendMessage(emptyCopyMsg);
+  const emptyCopyBtn = emptyCopyEl.querySelector('.msg-copy-btn');
+  check(
+    'copy button is hidden for thinking/tool-only messages',
+    emptyCopyBtn?.classList.contains('hidden'),
+    emptyCopyBtn?.className,
+  );
+  api.state.messages.pop();
+  emptyCopyEl.remove();
 
   // ── HTTP rejection removes optimistic messages ────────────────────────────
   const httpErrorFetch = window.fetch;

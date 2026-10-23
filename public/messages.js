@@ -105,7 +105,7 @@ export function createMessageElement(msg) {
   div.innerHTML = `
     <div class="msg-aside">
       <div class="msg-avatar">${avatar}</div>
-      <button class="msg-copy-btn" type="button" title="Copy message" aria-label="Copy message">⧉</button>
+      <button class="msg-copy-btn" type="button" title="Copy message text" aria-label="Copy message text">⧉</button>
     </div>
     <div class="msg-content">
       ${msg.thinking ? renderThinking(msg.thinking) : ''}
