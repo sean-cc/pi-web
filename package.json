@@ -9,6 +9,6 @@
     "start:awake": "caffeinate -ims node server.js"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "latest"
+    "@earendil-works/pi-coding-agent": "^1.4.0"
   }
 }
