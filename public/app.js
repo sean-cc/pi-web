@@ -2,7 +2,7 @@ import { escapeHtml, renderMarkdown } from './markdown.js';
 import { createSSEParser } from './sse.js';
 import { createRuler } from './ruler.js';
 import { formatBytes, attachmentIsImage, attachmentLabel, escapeAttr } from './util.js';
-import { renderToolCall, renderThinking, createMessageElement } from './messages.js';
+import { parseAttachmentMessage, renderToolCall, renderThinking, createMessageElement } from './messages.js';
 
 // ── Theme ───────────────────────────────────────────────────────────────────
 const THEME_KEY = 'pi-web-theme';
@@ -270,6 +270,17 @@ function showNotice(message) {
 
 // ── Message rendering ─────────────────────────────────────────────────────
 
+function messageCopyText(msg) {
+  if (msg.role === 'user') {
+    const parsed = parseAttachmentMessage(msg.content || '');
+    const files = (parsed.attachments || []).map(a => a.name).filter(Boolean);
+    return [parsed.text, files.length ? files.map(name => `[${name}]`).join(' ') : '']
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return String(msg.content || '');
+}
+
 function appendMessage(msg) {
   const el = createMessageElement(msg);
   chatMessages.appendChild(el);
@@ -280,6 +291,20 @@ function appendMessage(msg) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       copyButtonWithFeedback(btn);
+    });
+  });
+  const messageCopyBtn = el.querySelector('.msg-copy-btn');
+  messageCopyBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    copyToClipboard(messageCopyText(msg)).then((ok) => {
+      if (!ok) return;
+      clearTimeout(messageCopyBtn._copyTimer);
+      messageCopyBtn.classList.add('copied');
+      messageCopyBtn.textContent = '✓';
+      messageCopyBtn._copyTimer = setTimeout(() => {
+        messageCopyBtn.classList.remove('copied');
+        messageCopyBtn.textContent = '⧉';
+      }, 1200);
     });
   });
   return el;
@@ -881,7 +906,7 @@ async function sendPrompt(message) {
     const decoder = new TextDecoder();
     streamCtx = {
       sessionId: sid,
-      contentEl, assistantEl, workingEl,
+      contentEl, assistantEl, assistantMsg, workingEl,
       get currentText() { return currentText; },
       set currentText(v) { currentText = v; },
       get currentThinking() { return currentThinking; },

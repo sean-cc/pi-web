@@ -103,7 +103,10 @@ export function createMessageElement(msg) {
   const attachmentsHtml = isUser ? renderMessageAttachments(parsed.attachments, msg.images) : '';
   const avatar = isUser ? 'U' : 'P';
   div.innerHTML = `
-    <div class="msg-avatar">${avatar}</div>
+    <div class="msg-aside">
+      <div class="msg-avatar">${avatar}</div>
+      <button class="msg-copy-btn" type="button" title="Copy message" aria-label="Copy message">⧉</button>
+    </div>
     <div class="msg-content">
       ${msg.thinking ? renderThinking(msg.thinking) : ''}
       ${msg.toolCalls && msg.toolCalls.length > 0

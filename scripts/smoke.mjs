@@ -477,6 +477,31 @@ async function browserTests() {
     `top=${Math.round(chat.scrollTop)} max=${Math.round(chat.scrollHeight - chat.clientHeight)}`,
   );
 
+  // ── Copy whole message ───────────────────────────────────────────────────
+  let copiedText = null;
+  try {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text) => { copiedText = text; } },
+    });
+  } catch {}
+  const copyMsg = {
+    id: 'copy_test', role: 'assistant', content: 'copy **me**',
+    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+  };
+  api.state.messages.push(copyMsg);
+  const copyEl = api.appendMessage(copyMsg);
+  const copyBtn = copyEl.querySelector('.msg-copy-btn');
+  copyBtn?.click();
+  await wait(80);
+  check(
+    'message copy button copies the markdown',
+    copiedText === 'copy **me**' && copyBtn?.textContent === '✓',
+    `copied=${copiedText} label=${copyBtn?.textContent}`,
+  );
+  api.state.messages.pop();
+  copyEl.remove();
+
   // ── HTTP rejection removes optimistic messages ────────────────────────────
   const httpErrorFetch = window.fetch;
   window.fetch = async (url, opts) => {
