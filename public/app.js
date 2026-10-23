@@ -282,6 +282,18 @@ function messageCopyText(msg) {
   return String(msg.content || '');
 }
 
+// Provider pricing is in USD. Show an approximate CNY conversion; override
+// the rate in the browser with:
+//   localStorage.setItem('pi-web-usd-cny', '7.30')
+const USD_TO_CNY = (() => {
+  try {
+    const saved = Number(localStorage.getItem('pi-web-usd-cny'));
+    return Number.isFinite(saved) && saved > 0 ? saved : 7.2;
+  } catch {
+    return 7.2;
+  }
+})();
+
 function normalizeUsage(usage) {
   if (!usage || typeof usage !== 'object') return null;
   return {
@@ -330,9 +342,12 @@ function formatTokenCount(value) {
 }
 
 function formatCost(value) {
-  const cost = Number(value) || 0;
-  if (cost <= 0) return '';
-  return cost < 0.01 ? `$${cost.toFixed(6)}` : `$${cost.toFixed(4)}`;
+  const usd = Number(value) || 0;
+  if (usd <= 0) return '';
+  const cny = usd * USD_TO_CNY;
+  if (cny < 0.01) return `≈¥${cny.toFixed(4)}`;
+  if (cny < 1) return `≈¥${cny.toFixed(3)}`;
+  return `≈¥${cny.toFixed(2)}`;
 }
 
 function formatUsageLabel(usage) {
@@ -344,7 +359,11 @@ function formatUsageLabel(usage) {
 
 function formatUsageTitle(usage) {
   if (!usage) return '';
-  return `input ${usage.input.toLocaleString()} · output ${usage.output.toLocaleString()} · cache read ${usage.cacheRead.toLocaleString()} · cache write ${usage.cacheWrite.toLocaleString()} · cost ${formatCost(usage.cost) || '$0'}`;
+  const usd = usage.cost || 0;
+  const cost = usd > 0
+    ? `≈¥${(usd * USD_TO_CNY).toFixed(4)} (USD $${usd.toFixed(6)}, rate ${USD_TO_CNY})`
+    : '¥0.00';
+  return `input ${usage.input.toLocaleString()} · output ${usage.output.toLocaleString()} · cache read ${usage.cacheRead.toLocaleString()} · cache write ${usage.cacheWrite.toLocaleString()} · cost ${cost}`;
 }
 
 function updateMessageMeta(el) {

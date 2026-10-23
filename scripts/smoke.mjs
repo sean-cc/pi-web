@@ -557,9 +557,10 @@ async function browserTests() {
     `buttons=${groupEl.querySelectorAll('.msg-copy-btn').length}`,
   );
   check(
-    'grouped reply sums token usage',
+    'grouped reply sums token usage in CNY',
     (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↑150') &&
-      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↓15'),
+      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↓15') &&
+      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('≈¥'),
     groupEl.querySelector('.msg-usage')?.textContent,
   );
   check(
