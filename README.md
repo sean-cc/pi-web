@@ -97,6 +97,32 @@ unless it is in clamshell mode (power connected + external display, depending on
 the model). For tasks that must survive a closed lid or travel, run pi on an
 always-on remote machine.
 
+## Upgrading the pi SDK
+
+The server supports both the 0.x `AuthStorage` API and the 1.x `ModelRuntime` API,
+so the package can be upgraded or rolled back without code changes.
+
+```bash
+# Stop running pi Web servers first.
+cp package-lock.json /tmp/pi-web-package-lock-backup.json
+cp -R ~/.pi/agent ~/.pi/agent.bak-$(date +%Y%m%d-%H%M%S)
+
+npm install --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@latest
+node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version"
+./node_modules/.bin/pi --version
+
+npm start
+```
+
+On macOS, use `npm run start:awake` if you want the server to stay awake.
+The current 1.x line requires Node.js 22.19 or newer.
+
+To roll back:
+
+```bash
+npm install --ignore-scripts @earendil-works/pi-coding-agent@0.80.3
+```
+
 ## Smoke Test
 
 A small end-to-end UI smoke test is included (requires Chrome/Chromium and Node 22+):

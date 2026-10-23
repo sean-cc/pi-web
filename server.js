@@ -5,13 +5,14 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import {
-  AuthStorage,
+import * as piSdk from '@earendil-works/pi-coding-agent';
+
+const {
   ModelRegistry,
   SessionManager,
   createAgentSession,
   resizeImage,
-} from '@earendil-works/pi-coding-agent';
+} = piSdk;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -69,26 +70,63 @@ process.on('exit', () => {
 });
 
 // ── Auth & Model Registry ──────────────────────────────────────────────────
-const authStorage = AuthStorage.create();
 const MODELS_FILE = path.join(os.homedir(), '.pi', 'agent', 'models.json');
 
 function modelsFileMtime() {
   try { return fs.statSync(MODELS_FILE).mtimeMs; } catch { return 0; }
 }
 
-let modelRegistry = ModelRegistry.create(authStorage);
+// pi-coding-agent 1.x replaced AuthStorage with ModelRuntime; 0.x used
+// AuthStorage + ModelRegistry.create(). Support both so the server can be
+// upgraded (or rolled back) without a flag day.
+let modelRuntime = null;
+let authStorage = null;
+let modelRegistry;
+
+if (typeof piSdk.ModelRuntime === 'function') {
+  modelRuntime = await piSdk.ModelRuntime.create();
+  modelRegistry = new ModelRegistry(modelRuntime);
+} else {
+  authStorage = piSdk.AuthStorage.create();
+  modelRegistry = ModelRegistry.create(authStorage);
+}
+
 let modelRegistryMtime = modelsFileMtime();
+let modelRefreshPromise = null;
 
 // models.json can change while the web server is running (new cloud models,
-// capability fixes, etc.). Reload the registry when the file's mtime changes so
-// the `/model` picker does not stay stale until a full server restart.
+// capability fixes, etc.). Reload when the file's mtime changes so the
+// `/model` picker does not stay stale until a full server restart.
 function refreshModelRegistry() {
   const mtime = modelsFileMtime();
   if (mtime !== modelRegistryMtime) {
-    modelRegistry = ModelRegistry.create(authStorage);
-    modelRegistryMtime = mtime;
+    if (modelRuntime) {
+      if (!modelRefreshPromise) {
+        const targetMtime = mtime;
+        modelRefreshPromise = modelRuntime.refresh()
+          .then(() => { modelRegistryMtime = targetMtime; })
+          .catch((err) => {
+            console.warn(`Could not refresh models.json: ${err.message}`);
+          })
+          .finally(() => { modelRefreshPromise = null; });
+      }
+    } else {
+      modelRegistry = ModelRegistry.create(authStorage);
+      modelRegistryMtime = mtime;
+    }
   }
   return modelRegistry;
+}
+
+function sessionOptions(sessionManager) {
+  const options = { sessionManager };
+  if (modelRuntime) {
+    options.modelRuntime = modelRuntime;
+  } else {
+    options.authStorage = authStorage;
+    options.modelRegistry = modelRegistry;
+  }
+  return options;
 }
 
 // ── Active sessions pool ───────────────────────────────────────────────────
@@ -364,11 +402,7 @@ async function getOrCreateSession(sessionId) {
   }
   // Create new
   const sm = SessionManager.create(CWD);
-  const { session } = await createAgentSession({
-    sessionManager: sm,
-    authStorage,
-    modelRegistry: refreshModelRegistry(),
-  });
+  const { session } = await createAgentSession(sessionOptions(sm));
   const id = session.sessionId;
   activeSessions.set(id, { session, sessionManager: sm });
   return activeSessions.get(id);
@@ -376,11 +410,7 @@ async function getOrCreateSession(sessionId) {
 
 async function openSession(sessionPath) {
   const sm = SessionManager.open(sessionPath);
-  const { session, modelFallbackMessage } = await createAgentSession({
-    sessionManager: sm,
-    authStorage,
-    modelRegistry: refreshModelRegistry(),
-  });
+  const { session, modelFallbackMessage } = await createAgentSession(sessionOptions(sm));
   const id = session.sessionId;
   activeSessions.set(id, { session, sessionManager: sm });
   return { id, modelFallbackMessage };
