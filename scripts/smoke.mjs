@@ -477,6 +477,38 @@ async function browserTests() {
     `top=${Math.round(chat.scrollTop)} max=${Math.round(chat.scrollHeight - chat.clientHeight)}`,
   );
 
+  // ── HTTP rejection removes optimistic messages ────────────────────────────
+  const httpErrorFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    if (String(url).includes('/prompt')) {
+      return new Response(JSON.stringify({ error: 'simulated rejection' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return httpErrorFetch(url, opts);
+  };
+  api.state.isStreaming = false;
+  api.state.pendingAttachments = [];
+  api.state.uploading = 0;
+  const beforeRejected = api.state.messages.length;
+  await api.sendPrompt('http rejection test');
+  window.fetch = httpErrorFetch;
+  await wait(100);
+  check(
+    'HTTP rejection removes the optimistic message',
+    api.state.isStreaming === false &&
+      api.state.messages.length === beforeRejected &&
+      !api.state.messages.some(message => message.content === 'http rejection test') &&
+      !document.querySelector('#chatMessages .msg-content')?.textContent.includes('http rejection test'),
+    `messages=${api.state.messages.length} streaming=${api.state.isStreaming}`,
+  );
+  check(
+    'HTTP rejection shows an error',
+    Boolean(document.querySelector('.msg-error')?.textContent.includes('simulated rejection')),
+    document.querySelector('.msg-error')?.textContent,
+  );
+
   // ── Mid-stream disconnect recovery ───────────────────────────────────────
   const realFetch = window.fetch;
   let promptFetched = false;

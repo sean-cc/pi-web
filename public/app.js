@@ -860,6 +860,7 @@ async function sendPrompt(message) {
   let responseStarted = false;
   let httpError = false;
   let recoverAfterDisconnect = false;
+  let removeOptimistic = false;
 
   try {
     requestStarted = true;
@@ -921,10 +922,21 @@ async function sendPrompt(message) {
       showNotice(`Connection lost (${err.message}). Waiting for the session to finish…`);
       startSessionPoll(sid);
     } else {
+      // The server rejected the request before any stream started, so the
+      // optimistic user message was never persisted. Remove it instead of
+      // leaving a ghost message that disappears on the next reload.
+      removeOptimistic = true;
       showError(err.message);
     }
   } finally {
     state.currentStream = null;
+
+    if (removeOptimistic && state.sessionId === sid) {
+      const removedIds = new Set([userMsg.id, assistantMsg.id]);
+      state.messages = state.messages.filter(msg => !removedIds.has(msg.id));
+      renderAllMessages({ forceScroll: false });
+      setStreaming(false);
+    }
 
     // The user may have switched sessions while this stream was running. Only
     // touch shared UI/state if this stream still owns the visible session and
