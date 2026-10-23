@@ -47,6 +47,12 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const chatMessages = $('#chatMessages');
+const chatRuler = $('#chatRuler');
+const rulerTrack = $('#rulerTrack');
+const rulerTip = $('#rulerTip');
+const rulerTipRole = $('#rulerTipRole');
+const rulerTipText = $('#rulerTipText');
+const btnScrollBottom = $('#btnScrollBottom');
 const promptInput = $('#promptInput');
 const btnSend = $('#btnSend');
 const btnAbort = $('#btnAbort');
@@ -578,9 +584,280 @@ function getLastAssistantEl() {
   return all[all.length - 1];
 }
 
-function scrollToBottom() {
+// Auto-scroll only while the user is (or has returned to) the bottom of the
+// transcript. If they scroll up to read earlier output, incoming stream deltas
+// must leave their viewport alone; once they scroll back down we resume.
+const SCROLL_STICK_THRESHOLD = 48;
+let stickToBottom = true;
+
+function isNearBottom() {
+  const distance = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight;
+  return distance <= SCROLL_STICK_THRESHOLD;
+}
+
+chatMessages.addEventListener('scroll', () => {
+  stickToBottom = isNearBottom();
+  updateScrollBottomButton();
+  scheduleRulerUpdate();
+}, { passive: true });
+
+// force=true is for explicit jumps (session switch, sending a prompt) that
+// should always follow the latest output regardless of scroll position.
+function scrollToBottom(force = false) {
+  if (force) stickToBottom = true;
+  if (!stickToBottom) return;
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
+
+// ── Conversation timeline (right-hand ruler) ─────────────────────────────
+// One evenly spaced tick per user prompt. Hovering previews the prompt;
+// clicking or dragging the rail jumps to the nearest prompt.
+let rulerTicks = [];
+let rulerRaf = 0;
+let rulerDragging = false;
+let hoveredTick = null;
+
+function maxRulerScroll() {
+  return Math.max(0, chatMessages.scrollHeight - chatMessages.clientHeight);
+}
+
+// Show the jump-to-latest button whenever the reader is above the live edge.
+function updateScrollBottomButton() {
+  const show = maxRulerScroll() > 8 && !isNearBottom();
+  btnScrollBottom.classList.toggle('hidden', !show);
+}
+
+function scheduleRulerUpdate() {
+  if (rulerRaf) return;
+  rulerRaf = requestAnimationFrame(() => {
+    rulerRaf = 0;
+    refreshRuler();
+  });
+}
+
+function syncRulerTicks(messages) {
+  const changed = messages.length !== rulerTicks.length
+    || messages.some((msgEl, i) => rulerTicks[i].msgEl !== msgEl);
+  if (!changed) return;
+
+  hoveredTick = null;
+  rulerTip.classList.remove('visible');
+  rulerTrack.querySelectorAll('.ruler-tick').forEach(el => el.remove());
+  rulerTicks = messages.map((msgEl) => {
+    const el = document.createElement('div');
+    el.className = 'ruler-tick';
+    rulerTrack.appendChild(el);
+    return { el, msgEl, y: 0, offset: 0 };
+  });
+}
+
+function refreshRuler() {
+  updateScrollBottomButton();
+  const maxScroll = maxRulerScroll();
+  const prompts = $$('.msg-user', chatMessages);
+
+  if (maxScroll < 8 || prompts.length === 0) {
+    chatRuler.hidden = true;
+    hideRulerTip();
+    if (rulerTicks.length) {
+      rulerTrack.querySelectorAll('.ruler-tick').forEach(el => el.remove());
+      rulerTicks = [];
+    }
+    return;
+  }
+  chatRuler.hidden = false;
+  syncRulerTicks(prompts);
+
+  const containerRect = chatMessages.getBoundingClientRect();
+  const scrollTop = chatMessages.scrollTop;
+  const trackHeight = rulerTrack.clientHeight || 1;
+
+  // Evenly spaced slots: the ruler is an index of prompts, not a map of the
+  // transcript's pixel offsets (long replies no longer create huge gaps).
+  const count = rulerTicks.length;
+  const edgePadding = Math.min(10, trackHeight / 4);
+  const usableHeight = Math.max(1, trackHeight - edgePadding * 2);
+  const step = count > 1 ? usableHeight / (count - 1) : 0;
+
+  let currentTick = rulerTicks[0] || null;
+
+  rulerTicks.forEach((tick, index) => {
+    const rect = tick.msgEl.getBoundingClientRect();
+    tick.offset = Math.max(0, rect.top - containerRect.top + scrollTop);
+
+    const y = count > 1 ? edgePadding + index * step : trackHeight / 2;
+    tick.y = Math.max(1, Math.min(trackHeight - 1, y));
+    tick.el.style.top = `${tick.y}px`;
+
+    // The current prompt is the last one that started above the viewport.
+    if (tick.offset <= scrollTop + 2) currentTick = tick;
+  });
+
+  // At the very bottom the last prompt may sit below the viewport top; it is
+  // still the one being followed.
+  if (maxScroll > 0 && scrollTop >= maxScroll - 2) {
+    currentTick = rulerTicks[rulerTicks.length - 1] || currentTick;
+  }
+
+  for (const tick of rulerTicks) {
+    tick.el.classList.toggle('current', tick === currentTick);
+  }
+}
+
+function rulerMessagePreview(msgEl) {
+  const content = msgEl.querySelector('.msg-content');
+  if (!content) return '';
+  const clone = content.cloneNode(true);
+  clone.querySelectorAll('.tool-block, .thinking-block, .working-indicator, .msg-attachments, .streaming-cursor, .copy-btn')
+    .forEach(node => node.remove());
+
+  // textContent would glue separate block elements together, so add spaces
+  // around block-level nodes before normalizing.
+  let text = '';
+  const walk = (node) => {
+    if (node.nodeType === 3) {
+      text += node.nodeValue + ' ';
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    if (node.tagName === 'BR') {
+      text += ' ';
+      return;
+    }
+    const block = /^(P|DIV|LI|UL|OL|H[1-6]|PRE|BLOCKQUOTE|TR|TABLE)$/.test(node.tagName);
+    if (block) text += ' ';
+    for (const child of node.childNodes) walk(child);
+    if (block) text += ' ';
+  };
+  walk(clone);
+
+  return text.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function setHoveredTick(tick) {
+  if (hoveredTick === tick) return;
+  hoveredTick?.el.classList.remove('hover');
+  hoveredTick = tick;
+  hoveredTick?.el.classList.add('hover');
+}
+
+function hideRulerTip() {
+  rulerTip.classList.remove('visible');
+  setHoveredTick(null);
+}
+
+function showRulerTip(tick) {
+  if (hoveredTick === tick && rulerTip.classList.contains('visible')) return;
+  setHoveredTick(tick);
+
+  const isUser = tick.msgEl.classList.contains('msg-user');
+  rulerTipRole.textContent = isUser ? 'You' : 'Pi';
+  rulerTipRole.classList.toggle('assistant', !isUser);
+  rulerTipText.textContent = rulerMessagePreview(tick.msgEl) || '(empty message)';
+  rulerTip.classList.add('visible');
+
+  const tipHeight = rulerTip.offsetHeight;
+  const rulerRect = chatRuler.getBoundingClientRect();
+  const tickRect = tick.el.getBoundingClientRect();
+  let top = tickRect.top + tickRect.height / 2 - tipHeight / 2;
+  top = Math.max(8, Math.min(window.innerHeight - tipHeight - 8, top));
+  rulerTip.style.top = `${top}px`;
+  rulerTip.style.right = `${Math.max(8, window.innerWidth - rulerRect.left + 10)}px`;
+}
+
+function nearestRulerTick(clientY) {
+  const rect = rulerTrack.getBoundingClientRect();
+  const y = clientY - rect.top;
+  let best = null;
+  let bestDistance = Infinity;
+  for (const tick of rulerTicks) {
+    const distance = Math.abs(tick.y - y);
+    if (distance < bestDistance) {
+      best = tick;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function jumpRulerTo(clientY) {
+  const tick = nearestRulerTick(clientY);
+  if (!tick) return;
+  stickToBottom = false;
+  hideRulerTip();
+  chatMessages.scrollTop = Math.min(tick.offset, maxRulerScroll());
+  scheduleRulerUpdate();
+}
+
+function endRulerDrag(event) {
+  if (!rulerDragging) return;
+  rulerDragging = false;
+  chatRuler.classList.remove('dragging');
+  if (event && rulerTrack.hasPointerCapture?.(event.pointerId)) {
+    try { rulerTrack.releasePointerCapture(event.pointerId); } catch {}
+  }
+  stickToBottom = isNearBottom();
+  scheduleRulerUpdate();
+}
+
+rulerTrack.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  rulerDragging = true;
+  chatRuler.classList.add('dragging');
+  try { rulerTrack.setPointerCapture(event.pointerId); } catch {}
+  jumpRulerTo(event.clientY);
+});
+
+rulerTrack.addEventListener('pointermove', (event) => {
+  if (rulerDragging) {
+    jumpRulerTo(event.clientY);
+    return;
+  }
+  const tick = nearestRulerTick(event.clientY);
+  if (tick) showRulerTip(tick);
+  else hideRulerTip();
+});
+
+rulerTrack.addEventListener('pointerleave', () => {
+  if (!rulerDragging) hideRulerTip();
+});
+rulerTrack.addEventListener('pointerup', endRulerDrag);
+rulerTrack.addEventListener('pointercancel', endRulerDrag);
+
+btnScrollBottom.addEventListener('click', () => {
+  // Re-enable follow mode: while a stream keeps producing output, every new
+  // delta will keep the view pinned to the newest message.
+  scrollToBottom(true);
+  updateScrollBottomButton();
+});
+
+btnScrollBottom.addEventListener('wheel', (event) => {
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? chatMessages.clientHeight : 1;
+  chatMessages.scrollTop += event.deltaY * unit;
+  event.preventDefault();
+}, { passive: false });
+
+// Wheel over the ruler should still scroll the transcript.
+rulerTrack.addEventListener('wheel', (event) => {
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? chatMessages.clientHeight : 1;
+  hideRulerTip();
+  chatMessages.scrollTop += event.deltaY * unit;
+  event.preventDefault();
+}, { passive: false });
+
+// Keep ticks in sync with message inserts/removals and streaming updates.
+new MutationObserver(scheduleRulerUpdate).observe(chatMessages, {
+  childList: true,
+  subtree: true,
+  characterData: true,
+});
+window.addEventListener('resize', scheduleRulerUpdate);
+chatMessages.addEventListener('load', scheduleRulerUpdate, true);
+if (window.ResizeObserver) {
+  new ResizeObserver(scheduleRulerUpdate).observe(chatMessages);
+}
+scheduleRulerUpdate();
 
 function copyToClipboard(text) {
   if (navigator.clipboard) {
@@ -636,6 +913,7 @@ window.toggleToolBlock = function (headerOrBody) {
   }
   header.classList.toggle('open');
   body.classList.toggle('open');
+  scheduleRulerUpdate();
 };
 
 // ── Session management ────────────────────────────────────────────────────
@@ -799,7 +1077,10 @@ async function loadModelInfo() {
 
 // ── Message rendering ─────────────────────────────────────────────────────
 
-function renderAllMessages() {
+function renderAllMessages({ forceScroll = true } = {}) {
+  const previousScrollTop = chatMessages.scrollTop;
+  const wasStick = stickToBottom;
+
   // Remove existing messages
   const existing = $$('.msg', chatMessages);
   existing.forEach(el => el.remove());
@@ -812,6 +1093,15 @@ function renderAllMessages() {
 
   for (const msg of state.messages) {
     appendMessage(msg);
+  }
+
+  if (forceScroll || wasStick) {
+    // A freshly rendered transcript should open at the latest message.
+    scrollToBottom(true);
+  } else {
+    // A background refresh (e.g. stream finished while reading history) must
+    // keep the reader where they were; scroll events will re-evaluate stick.
+    chatMessages.scrollTop = previousScrollTop;
   }
 }
 
@@ -854,7 +1144,7 @@ function startSessionPoll(sid) {
       if (!data.isStreaming) {
         stopSessionPoll();
         state.messages = data.messages || [];
-        renderAllMessages();
+        renderAllMessages({ forceScroll: false });
         setStreaming(false);
         await loadSessionList();
       }
@@ -894,6 +1184,8 @@ async function sendPrompt(message) {
   };
   state.messages.push(userMsg);
   appendMessage(userMsg);
+  // Sending a prompt is an explicit jump to the latest output.
+  scrollToBottom(true);
 
   // Clear input and pending attachments
   promptInput.value = '';

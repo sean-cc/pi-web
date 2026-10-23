@@ -229,10 +229,148 @@ body {
   height: 100vh;
 }
 
+.chat-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
   padding-bottom: 8px;
+}
+
+/* ── Conversation timeline (right-hand ruler) ───────────────────────────── */
+.chat-ruler {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  right: 14px;
+  width: 28px;
+  z-index: 30;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+  touch-action: none;
+  user-select: none;
+}
+.chat-ruler:hover,
+.chat-ruler.dragging {
+  opacity: 1;
+}
+
+.ruler-track {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  outline: none;
+}
+.chat-ruler.dragging .ruler-track {
+  cursor: grabbing;
+}
+.ruler-track::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border-primary);
+  opacity: 0.55;
+}
+
+.ruler-tick {
+  position: absolute;
+  right: 0;
+  width: 20px;
+  height: 5px;
+  border-radius: 2.5px;
+  background: var(--accent);
+  opacity: 0.9;
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: width 0.12s ease, opacity 0.12s ease;
+}
+.ruler-tick.hover,
+.ruler-tick.current {
+  width: 26px;
+  opacity: 1;
+}
+
+.ruler-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 300px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.ruler-tip.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.ruler-tip-role {
+  margin-bottom: 3px;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.ruler-tip-role.assistant {
+  color: var(--info);
+}
+.ruler-tip-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* ── Jump to latest button ───────────────────────────────────────────────── */
+.btn-scroll-bottom {
+  position: absolute;
+  right: 54px;
+  bottom: 18px;
+  z-index: 40;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  animation: fadeIn 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.btn-scroll-bottom:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+.btn-scroll-bottom:active {
+  transform: translateY(0);
+}
+.btn-scroll-bottom svg {
+  display: block;
 }
 
 /* ── Welcome Screen ─────────────────────────────────────────────────────── */
@@ -279,6 +417,15 @@ body {
 
 .msg-assistant {
   background: var(--bg-assistant);
+}
+
+/* Consecutive assistant steps (thinking/tool steps of the same turn) would
+   otherwise stack two full 20px paddings into a 40px gap between P badges. */
+.msg-assistant + .msg-assistant {
+  padding-top: 8px;
+}
+.msg-assistant:has(+ .msg-assistant) {
+  padding-bottom: 8px;
 }
 
 .msg-avatar {
@@ -1291,4 +1438,22 @@ body {
   }
   .attachment-copy { max-width: 120px; }
   .msg-attachment.image { max-width: 190px; }
+
+  /* Keep the timeline inside the composer gutter on narrow screens. */
+  .chat-ruler {
+    right: 4px;
+    width: 18px;
+  }
+  .ruler-tick {
+    width: 14px;
+    height: 4px;
+    border-radius: 2px;
+  }
+  .ruler-tick.hover,
+  .ruler-tick.current { width: 18px; }
+
+  .btn-scroll-bottom {
+    right: 30px;
+    bottom: 14px;
+  }
 }
