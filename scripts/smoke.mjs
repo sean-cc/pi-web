@@ -192,7 +192,7 @@ try {
   let ready = false;
   for (let i = 0; i < 60; i++) {
     ready = await evaluate(`(() => {
-      try { return typeof appendMessage === 'function' && state.sessionId === 'smoke'; }
+      try { return Boolean(window.__piWeb) && window.__piWeb.state.sessionId === 'smoke'; }
       catch { return false; }
     })()`).catch(() => false);
     if (ready) break;
@@ -240,6 +240,14 @@ async function browserTests() {
   const chat = document.querySelector('#chatMessages');
   const distanceToBottom = () => Math.round(chat.scrollHeight - chat.scrollTop - chat.clientHeight);
 
+  const api = window.__piWeb;
+  if (!api) throw new Error('window.__piWeb is missing');
+  const {
+    state, appendMessage, handleSSEEvent, scrollToBottom,
+    renderWorkingIndicator, createSSEParser, renderMarkdown,
+  } = api;
+  const stopSessionPoll = api.stopSessionPoll;
+
   stopSessionPoll();
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
   state.messages = [];
@@ -277,6 +285,14 @@ async function browserTests() {
     (listHtml.match(/<li>/g) || []).length === 2 && listHtml.includes('<ul>') && !listHtml.includes('<ol>'),
     listHtml,
   );
+  const linkHtml = renderMarkdown('[example](https://example.com)');
+  check(
+    'markdown renders safe links',
+    linkHtml.includes('<a href="https://example.com"') && linkHtml.includes('rel="noopener noreferrer"'),
+    linkHtml,
+  );
+  const badLinkHtml = renderMarkdown('[bad](javascript:alert(1))');
+  check('markdown rejects javascript URLs', !badLinkHtml.includes('<a '), badLinkHtml);
 
   // ── Streaming transcript setup ───────────────────────────────────────────
   const baseline = Array.from({ length: 8 }, (_, i) => 'Baseline paragraph ' + i + '. ' + 'Earlier conversation text. '.repeat(12)).join('\n\n');
@@ -321,7 +337,7 @@ async function browserTests() {
     handleSSEEvent('thinking', { delta: 'thinking line ' + i + '\n' }, ctx);
   }
   await wait(120);
-  check('thinking stream follows the bottom', stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()} stick=${stickToBottom}`);
+  check('thinking stream follows the bottom', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()} stick=${api.stickToBottom}`);
 
   handleSSEEvent('tool_start', { toolCallId: 'tool_smoke', toolName: 'bash', input: { command: 'echo test' } }, ctx);
   handleSSEEvent('tool_update', { toolCallId: 'tool_smoke', output: 'streamed tool output' }, ctx);
@@ -334,9 +350,17 @@ async function browserTests() {
   check(
     'tool block survives a text rebuild',
     Boolean(toolBlock) && toolBlock.querySelector('.tool-status')?.textContent === 'Done',
-    toolBlock?.textContent?.replace(/\\s+/g, ' ').slice(0, 80),
+    toolBlock?.textContent?.replace(/\s+/g, ' ').slice(0, 80),
   );
-  check('text stream follows the bottom', stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
+  const toolHeader = toolBlock?.querySelector('.tool-header');
+  toolHeader?.click();
+  check(
+    'inline tool toggle still works',
+    Boolean(toolHeader?.classList.contains('open')) && Boolean(toolBlock?.querySelector('.tool-body')?.classList.contains('open')),
+    toolHeader?.className,
+  );
+  toolHeader?.click();
+  check('text stream follows the bottom', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
 
   // ── Reading history must not move while output continues ────────────────
   chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
@@ -349,16 +373,27 @@ async function browserTests() {
   await wait(120);
   check(
     'reading stays frozen during stream',
-    Math.abs(chat.scrollTop - readingTop) <= 1 && !stickToBottom,
-    `moved=${Math.round(chat.scrollTop - readingTop)}px stick=${stickToBottom}`,
+    Math.abs(chat.scrollTop - readingTop) <= 1 && !api.stickToBottom,
+    `moved=${Math.round(chat.scrollTop - readingTop)}px stick=${api.stickToBottom}`,
+  );
+  const jumpButton = document.querySelector('#btnScrollBottom');
+  check(
+    'jump button marks new output',
+    !jumpButton.classList.contains('hidden') && jumpButton.classList.contains('has-new'),
+    jumpButton.className,
   );
 
-  document.querySelector('#btnScrollBottom').click();
+  jumpButton.click();
   for (let i = 0; i < 8; i++) {
     handleSSEEvent('text', { delta: 'after jump ' + i + ' ' }, ctx);
   }
   await wait(150);
-  check('jump-to-latest resumes following', stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
+  check('jump-to-latest resumes following', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
+  check(
+    'jump button clears the new-output marker',
+    jumpButton.classList.contains('hidden') && !jumpButton.classList.contains('has-new'),
+    jumpButton.className,
+  );
 
   // ── Ruler: all prompts retained, min gap, click and keyboard ────────────
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());

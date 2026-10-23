@@ -1,3 +1,6 @@
+import { escapeHtml, renderMarkdown } from './markdown.js';
+import { createSSEParser } from './sse.js';
+
 // ── Theme ───────────────────────────────────────────────────────────────────
 const THEME_KEY = 'pi-web-theme';
 
@@ -332,181 +335,6 @@ function showNotice(message) {
   setTimeout(() => div.remove(), 9000);
 }
 
-// ── Simple Markdown Renderer ──────────────────────────────────────────────
-
-function escapeHtml(text) {
-  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-  return text.replace(/[&<>"']/g, c => map[c]);
-}
-
-function renderMarkdown(text) {
-  if (!text) return '';
-
-  // Extract code blocks from the raw text first: the copy button needs the
-  // original code, and the placeholder protects it from escaping/formatting.
-  const codeBlocks = [];
-  let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push({ lang: lang || '', code: code.trimEnd() });
-    return `\x00CODEBLOCK${idx}\x00`;
-  });
-
-  // Tables are extracted from raw text too; cells are escaped later by
-  // renderInline so cell-level markdown still works.
-  const tables = [];
-  processed = processed.replace(
-    /^\|(.+)\|\n\|([-:| ]+)\|\n(?:\|.+\|\n?)+/gm,
-    (match) => {
-      const idx = tables.length;
-      tables.push(match.split('\n').filter(l => l.trim()));
-      return `\x00TABLE${idx}\x00`;
-    }
-  );
-
-  // Inline code is protected before the global escape pass.
-  const inlineCodes = [];
-  processed = processed.replace(/`([^`]+)`/g, (_, code) => {
-    const idx = inlineCodes.length;
-    inlineCodes.push(code);
-    return `\x00INLINECODE${idx}\x00`;
-  });
-
-  // Escape all remaining text. This is the key XSS guard: everything that is
-  // not one of the generated tags below is now inert.
-  processed = escapeHtml(processed);
-
-  // Bold / italic (contents are already escaped).
-  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-  // Headers
-  processed = processed.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-  processed = processed.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  processed = processed.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  processed = processed.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Blockquotes (the leading > was escaped to &gt; above)
-  processed = processed.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // Horizontal rules
-  processed = processed.replace(/^---$/gm, '<hr>');
-
-  // Lists: extract each block before paragraph wrapping so ordered and
-  // unordered items cannot be nested inside each other by later passes.
-  const lists = [];
-  processed = processed.replace(/^(?:\d+\. .+(?:\n|$))+/gm, (block) => {
-    const idx = lists.length;
-    const items = block.trimEnd().split('\n')
-      .map(line => `<li>${line.replace(/^\d+\.\s+/, '')}</li>`)
-      .join('');
-    lists.push(`<ol>${items}</ol>`);
-    return `\x00LIST${idx}\x00\n`;
-  });
-  processed = processed.replace(/^(?:[*-] .+(?:\n|$))+/gm, (block) => {
-    const idx = lists.length;
-    const items = block.trimEnd().split('\n')
-      .map(line => `<li>${line.replace(/^[*-]\s+/, '')}</li>`)
-      .join('');
-    lists.push(`<ul>${items}</ul>`);
-    return `\x00LIST${idx}\x00\n`;
-  });
-
-  // Paragraphs: wrap remaining text blocks in <p>
-  processed = processed.replace(/\n\n+/g, '</p><p>');
-  processed = '<p>' + processed + '</p>';
-  processed = processed.replace(/<p>\s*<\/p>/g, '');
-  // Keep block elements out of paragraph wrappers.
-  processed = processed.replace(/<p>\s*(<h[1-6][^>]*>)/g, '$1');
-  processed = processed.replace(/(<\/h[1-6]>)\s*<\/p>/g, '$1');
-  processed = processed.replace(/<p>\s*(<blockquote>)/g, '$1');
-  processed = processed.replace(/(<\/blockquote>)\s*<\/p>/g, '$1');
-  processed = processed.replace(/<p>\s*(<hr>)\s*<\/p>/g, '$1');
-  processed = processed.replace(/<p>\x00(?:TABLE|LIST|CODEBLOCK)(\d+)\x00<\/p>/g, (match, idx) => match.replace(/<p>|<\/p>/g, ''));
-
-  // Restore lists and tables
-  processed = processed.replace(/\x00LIST(\d+)\x00/g, (_, idx) => lists[parseInt(idx)]);
-  processed = processed.replace(/\x00TABLE(\d+)\x00/g, (_, idx) => renderTable(tables[parseInt(idx)]));
-
-  // Restore code blocks, using the raw code for both display and copy.
-  processed = processed.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => {
-    const block = codeBlocks[parseInt(idx)];
-    const header = block.lang
-      ? `<div class="code-header"><span>${escapeHtml(block.lang)}</span><button class="copy-btn" data-code="${encodeURIComponent(block.code)}">Copy</button></div>`
-      : '';
-    return `${header}<pre><code>${escapeHtml(block.code)}</code></pre>`;
-  });
-
-  // Restore inline code after all tag-generating passes.
-  processed = processed.replace(/\x00INLINECODE(\d+)\x00/g, (_, idx) =>
-    `<code>${escapeHtml(inlineCodes[parseInt(idx)])}</code>`
-  );
-
-  // Final safety pass: block-level output must not sit inside <p>.
-  processed = processed.replace(/<p>\s*(<ul>|<ol>|<blockquote>|<h[1-6][^>]*>|<hr>|<div class="(?:table-wrapper|code-header)">|<pre>)/g, '$1');
-  processed = processed.replace(/(<\/ul>|<\/ol>|<\/blockquote>|<\/h[1-6]>|<\/div>|<\/pre>)\s*<\/p>/g, '$1');
-  processed = processed.replace(/<p>\s*<\/p>/g, '');
-
-  return processed;
-}
-
-function renderInline(text) {
-  // Table cells are raw here; escape once, then apply inline markdown.
-  let result = escapeHtml(text);
-  const inlineCodes = [];
-  result = result.replace(/`([^`]+)`/g, (_, code) => {
-    const idx = inlineCodes.length;
-    inlineCodes.push(code);
-    return `\x00INLINECODE${idx}\x00`;
-  });
-  result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  result = result.replace(/\x00INLINECODE(\d+)\x00/g, (_, idx) => `<code>${inlineCodes[parseInt(idx)]}</code>`);
-  return result;
-}
-
-function renderTable(lines) {
-  if (!lines || lines.length < 2) return '';
-
-  // Parse alignment from delimiter line (second line)
-  const delimiterCells = lines[1].split('|').filter(c => c.trim());
-  const alignments = delimiterCells.map(cell => {
-    const trimmed = cell.trim();
-    if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
-    if (trimmed.endsWith(':')) return 'right';
-    return 'left';
-  });
-
-  let html = '<div class="table-wrapper"><table>';
-
-  // Header row (first line)
-  const headerCells = lines[0].split('|').filter(c => c.trim());
-  html += '<thead><tr>';
-  headerCells.forEach((cell, i) => {
-    const align = alignments[i] || 'left';
-    html += `<th style="text-align:${align}">${renderInline(cell.trim())}</th>`;
-  });
-  html += '</tr></thead>';
-
-  // Body rows (from third line onwards)
-  if (lines.length > 2) {
-    html += '<tbody>';
-    for (let r = 2; r < lines.length; r++) {
-      const cells = lines[r].split('|').filter(c => c.trim());
-      if (cells.length === 0) continue;
-      html += '<tr>';
-      cells.forEach((cell, i) => {
-        const align = alignments[i] || 'left';
-        html += `<td style="text-align:${align}">${renderInline(cell.trim())}</td>`;
-      });
-      html += '</tr>';
-    }
-    html += '</tbody>';
-  }
-
-  html += '</table></div>';
-  return html;
-}
-
 // ── Message rendering ─────────────────────────────────────────────────────
 
 function renderToolCall(tc, index) {
@@ -577,6 +405,7 @@ function createMessageElement(msg) {
 function appendMessage(msg) {
   const el = createMessageElement(msg);
   chatMessages.appendChild(el);
+  if (!stickToBottom) markNewOutput();
   scrollToBottom();
   // Attach copy handlers
   el.querySelectorAll('.copy-btn').forEach(btn => {
@@ -598,6 +427,7 @@ function getLastAssistantEl() {
 // must leave their viewport alone; once they scroll back down we resume.
 const SCROLL_STICK_THRESHOLD = 48;
 let stickToBottom = true;
+let hasNewOutput = false;
 
 function isNearBottom() {
   const distance = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight;
@@ -622,6 +452,7 @@ chatMessages.addEventListener('scroll', () => {
     stickToBottom = false;
   } else if (nearBottom) {
     stickToBottom = true;
+    hasNewOutput = false;
   }
 
   lastScrollTop = top;
@@ -659,7 +490,11 @@ chatMessages.addEventListener('touchend', () => {
 // force=true is for explicit jumps (session switch, sending a prompt) that
 // should always follow the latest output regardless of scroll position.
 function scrollToBottom(force = false) {
-  if (force) stickToBottom = true;
+  if (force) {
+    stickToBottom = true;
+    hasNewOutput = false;
+    updateScrollBottomButton();
+  }
   if (!stickToBottom) return;
   chatMessages.scrollTop = chatMessages.scrollHeight;
   // A forced jump (session switch, sending a prompt) may land above the old
@@ -698,6 +533,13 @@ function maxRulerScroll() {
 function updateScrollBottomButton() {
   const show = maxRulerScroll() > 8 && !stickToBottom;
   btnScrollBottom.classList.toggle('hidden', !show);
+  btnScrollBottom.classList.toggle('has-new', show && hasNewOutput);
+}
+
+function markNewOutput() {
+  if (stickToBottom) return;
+  hasNewOutput = true;
+  updateScrollBottomButton();
 }
 
 function scheduleRulerUpdate() {
@@ -1327,6 +1169,7 @@ function renderAllMessages({ forceScroll = true } = {}) {
     // A background refresh (e.g. stream finished while reading history) must
     // keep the reader where they were; scroll events will re-evaluate stick.
     chatMessages.scrollTop = previousScrollTop;
+    markNewOutput();
   }
 }
 
@@ -1377,59 +1220,6 @@ function startSessionPoll(sid) {
       // Transient fetch failures should not freeze the UI; keep polling.
     }
   }, 1000);
-}
-
-// ── SSE parsing ───────────────────────────────────────────────────────────
-// Keep incomplete lines across network chunks: a `data:` payload can be split
-// anywhere, and dropping the tail loses thinking/text deltas.
-function emitSSEBlock(block, onEvent) {
-  let eventType = '';
-  const dataLines = [];
-
-  for (const rawLine of block.split('\n')) {
-    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-    if (!line || line.startsWith(':')) continue;
-
-    const colon = line.indexOf(':');
-    const field = colon === -1 ? line : line.slice(0, colon);
-    let value = colon === -1 ? '' : line.slice(colon + 1);
-    if (value.startsWith(' ')) value = value.slice(1);
-
-    if (field === 'event') eventType = value;
-    else if (field === 'data') dataLines.push(value);
-  }
-
-  if (!dataLines.length) return;
-  const payload = dataLines.join('\n');
-  try {
-    onEvent(eventType, JSON.parse(payload));
-  } catch (err) {
-    console.warn('Failed to parse SSE event', eventType, err);
-  }
-}
-
-function createSSEParser(onEvent) {
-  let buffer = '';
-
-  return {
-    push(chunk) {
-      buffer += chunk;
-      // Normalise CRLF, including a CR that ended the previous chunk.
-      buffer = buffer.replace(/\r\n?/g, '\n');
-
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const block = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        emitSSEBlock(block, onEvent);
-        boundary = buffer.indexOf('\n\n');
-      }
-    },
-    end() {
-      if (buffer.trim()) emitSSEBlock(buffer, onEvent);
-      buffer = '';
-    },
-  };
 }
 
 async function sendPrompt(message) {
@@ -1609,6 +1399,8 @@ function handleSSEEvent(type, data, ctx) {
   // was replaced). Otherwise a background stream can scroll the new session
   // or corrupt its messages.
   if (ctx.sessionId !== state.sessionId || !ctx.contentEl?.isConnected) return;
+
+  if (!stickToBottom) markNewOutput();
 
   const { contentEl } = ctx;
 
@@ -2673,6 +2465,22 @@ window.selectModel = async function (provider, modelId) {
     showError(`Failed to switch model: ${err.message}`);
     return null;
   }
+};
+
+// Exposed for scripts/smoke.mjs and browser-console debugging.
+window.__piWeb = {
+  state,
+  appendMessage,
+  handleSSEEvent,
+  scrollToBottom,
+  renderWorkingIndicator,
+  stopSessionPoll,
+  createSSEParser,
+  renderMarkdown,
+  escapeHtml,
+  get stickToBottom() { return stickToBottom; },
+  get rulerTicks() { return rulerTicks; },
+  get rulerCurrentIndex() { return rulerCurrentIndex; },
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────

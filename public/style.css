@@ -378,6 +378,18 @@ body {
 .btn-scroll-bottom svg {
   display: block;
 }
+.btn-scroll-bottom.has-new::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
 
 /* ── Welcome Screen ─────────────────────────────────────────────────────── */
 .welcome {
