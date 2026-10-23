@@ -477,5 +477,36 @@ async function browserTests() {
     `top=${Math.round(chat.scrollTop)} max=${Math.round(chat.scrollHeight - chat.clientHeight)}`,
   );
 
+  // ── Mid-stream disconnect recovery ───────────────────────────────────────
+  const realFetch = window.fetch;
+  let promptFetched = false;
+  window.fetch = async (url, opts) => {
+    if (String(url).includes('/prompt')) {
+      promptFetched = true;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: thinking_start\ndata: {}\n\nevent: thinking\ndata: {"delta":"partial"}\n\n'));
+          setTimeout(() => controller.error(new Error('simulated network loss')), 30);
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return realFetch(url, opts);
+  };
+
+  api.state.isStreaming = false;
+  api.state.pendingAttachments = [];
+  api.state.uploading = 0;
+  await api.sendPrompt('recovery test');
+  window.fetch = realFetch;
+
+  let recovered = false;
+  for (let i = 0; i < 40; i++) {
+    await wait(100);
+    if (!api.state.isStreaming) { recovered = true; break; }
+  }
+  check('mid-stream disconnect recovers', promptFetched && recovered, `streaming=${api.state.isStreaming}`);
+
   return results;
 }

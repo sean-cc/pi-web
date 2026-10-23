@@ -987,8 +987,13 @@ async function sendPrompt(message) {
   scrollToBottom();
 
   let streamCtx = null;
+  let requestStarted = false;
+  let responseStarted = false;
+  let httpError = false;
+  let recoverAfterDisconnect = false;
 
   try {
+    requestStarted = true;
     const res = await fetch(`/api/sessions/${sid}/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -996,10 +1001,12 @@ async function sendPrompt(message) {
     });
 
     if (!res.ok) {
+      httpError = true;
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
 
+    responseStarted = true;
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     streamCtx = {
@@ -1036,6 +1043,14 @@ async function sendPrompt(message) {
       if (contentEl) {
         contentEl.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
       }
+    } else if (responseStarted || (requestStarted && !httpError)) {
+      // The response stream broke mid-task (sleep, Wi-Fi change, proxy), or
+      // the network failed before headers arrived. The agent may still be
+      // running server-side; keep the working UI and reconcile with the
+      // session once it finishes.
+      recoverAfterDisconnect = true;
+      showNotice(`Connection lost (${err.message}). Waiting for the session to finish…`);
+      startSessionPoll(sid);
     } else {
       showError(err.message);
     }
@@ -1045,7 +1060,7 @@ async function sendPrompt(message) {
     // The user may have switched sessions while this stream was running. Only
     // touch shared UI/state if this stream still owns the visible session and
     // its DOM is still mounted.
-    if (state.sessionId === sid && assistantEl.isConnected) {
+    if (state.sessionId === sid && assistantEl.isConnected && !recoverAfterDisconnect) {
       if (streamCtx) flushAssistantContentRender(contentEl, streamCtx);
       setStreaming(false);
 
@@ -2168,6 +2183,7 @@ window.__piWeb = {
   state,
   appendMessage,
   renderAllMessages,
+  sendPrompt,
   handleSSEEvent,
   scrollToBottom,
   renderWorkingIndicator,
