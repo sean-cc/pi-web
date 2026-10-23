@@ -59,12 +59,24 @@ This stores credentials in `~/.pi/agent/auth.json` which pi Web UI will use auto
 ```
 piWeb/
 ├── server.js          # Node.js backend (pure http module)
+├── scripts/
+│   └── smoke.mjs      # Headless Chrome smoke test (npm run smoke)
 ├── public/
 │   ├── index.html     # HTML shell
 │   ├── style.css      # OpenAI-inspired dark theme
 │   └── app.js         # Frontend logic (vanilla JS)
 └── package.json
 ```
+
+## Smoke Test
+
+A small end-to-end UI smoke test is included (requires Chrome/Chromium and Node 22+):
+
+```bash
+npm run smoke
+```
+
+It starts a temporary stub server and headless Chrome, then checks SSE chunk parsing, markdown escaping, thinking/tool streaming follow, read-history freeze, jump-to-latest, and the conversation ruler.
 
 ## API Endpoints
 

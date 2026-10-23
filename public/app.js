@@ -526,7 +526,7 @@ function renderToolCall(tc, index) {
   const outputType = tc.result !== null ? 'result' : 'output';
   return `
     <div class="tool-block" data-tool-index="${index}" data-tool-id="${escapeAttr(tc.id ?? '')}">
-      <div class="tool-header" onclick="toggleToolBlock(this)">
+      <div class="tool-header${tc.result === null ? ' open' : ''}" onclick="toggleToolBlock(this)">
         <span class="tool-icon">🔧</span>
         <span class="tool-name">${escapeHtml(title)}</span>
         <span class="tool-status ${statusClass}">${statusText}</span>
@@ -683,7 +683,12 @@ let rulerTicksVersion = 0;
 let rulerLastLayoutKey = '';
 let rulerLastCurrentVersion = -1;
 let rulerLastCurrentIndex = -1;
+let rulerEdgeTimer = null;
+let rulerEdgeDir = 0;
 const RULER_MIN_GAP = 9;
+const RULER_EDGE_ZONE = 18;
+const RULER_EDGE_STEP = 2;
+const RULER_EDGE_INTERVAL = 100;
 
 function maxRulerScroll() {
   return Math.max(0, chatMessages.scrollHeight - chatMessages.clientHeight);
@@ -914,30 +919,65 @@ function nearestRulerTick(clientY) {
   return best;
 }
 
-function jumpRulerTo(clientY, allowEdgeAdvance = false) {
-  const rect = rulerTrack.getBoundingClientRect();
-  let target = null;
-
-  // While dragging at the top/bottom edge, keep advancing through prompts so
-  // the whole (scrolled) ruler can be scrubbed without moving the mouse away.
-  if (allowEdgeAdvance && rulerTicks.length) {
-    const edge = 18;
-    const advance = 3;
-    if (clientY - rect.top < edge) {
-      target = rulerTicks[Math.max(0, rulerCurrentIndex - advance)];
-    } else if (clientY - rect.top > rect.height - edge) {
-      target = rulerTicks[Math.min(rulerTicks.length - 1, rulerCurrentIndex + advance)];
-    }
-  }
-
-  if (!target) target = nearestRulerTick(clientY);
+function goToRulerIndex(index) {
+  if (!rulerTicks.length) return;
+  const targetIndex = Math.max(0, Math.min(rulerTicks.length - 1, index));
+  const target = rulerTicks[targetIndex];
   if (!target) return;
 
-  rulerCurrentIndex = rulerTicks.indexOf(target);
+  rulerCurrentIndex = targetIndex;
   stickToBottom = false;
   hideRulerTip();
   chatMessages.scrollTop = Math.min(target.offset, maxRulerScroll());
   scheduleRulerUpdate();
+}
+
+function jumpRulerTo(clientY) {
+  const target = nearestRulerTick(clientY);
+  if (!target) return;
+  goToRulerIndex(rulerTicks.indexOf(target));
+}
+
+function stopRulerEdgeScroll() {
+  if (rulerEdgeTimer) clearInterval(rulerEdgeTimer);
+  rulerEdgeTimer = null;
+  rulerEdgeDir = 0;
+}
+
+function advanceRulerEdge() {
+  if (!rulerDragging || !rulerEdgeDir || !rulerTicks.length) {
+    stopRulerEdgeScroll();
+    return;
+  }
+
+  const nextIndex = rulerCurrentIndex + rulerEdgeDir * RULER_EDGE_STEP;
+  const clamped = Math.max(0, Math.min(rulerTicks.length - 1, nextIndex));
+  if (clamped === rulerCurrentIndex) {
+    stopRulerEdgeScroll();
+    return;
+  }
+
+  goToRulerIndex(clamped);
+}
+
+function setRulerEdgeDirection(direction) {
+  if (direction === rulerEdgeDir && (direction === 0 || rulerEdgeTimer)) return;
+  rulerEdgeDir = direction;
+  if (!direction) {
+    stopRulerEdgeScroll();
+    return;
+  }
+  if (!rulerEdgeTimer) {
+    rulerEdgeTimer = setInterval(advanceRulerEdge, RULER_EDGE_INTERVAL);
+  }
+}
+
+function updateRulerEdgeMode(clientY) {
+  const rect = rulerTrack.getBoundingClientRect();
+  const y = clientY - rect.top;
+  if (y < RULER_EDGE_ZONE) setRulerEdgeDirection(-1);
+  else if (y > rect.height - RULER_EDGE_ZONE) setRulerEdgeDirection(1);
+  else setRulerEdgeDirection(0);
 }
 
 function endRulerDrag(event) {
@@ -947,6 +987,7 @@ function endRulerDrag(event) {
   if (event && rulerTrack.hasPointerCapture?.(event.pointerId)) {
     try { rulerTrack.releasePointerCapture(event.pointerId); } catch {}
   }
+  stopRulerEdgeScroll();
   stickToBottom = isNearBottom();
   scheduleRulerUpdate();
 }
@@ -956,18 +997,43 @@ rulerTrack.addEventListener('pointerdown', (event) => {
   event.preventDefault();
   rulerDragging = true;
   chatRuler.classList.add('dragging');
+  try { rulerTrack.focus({ preventScroll: true }); } catch {}
   try { rulerTrack.setPointerCapture(event.pointerId); } catch {}
   jumpRulerTo(event.clientY);
+  updateRulerEdgeMode(event.clientY);
 });
 
 rulerTrack.addEventListener('pointermove', (event) => {
   if (rulerDragging) {
-    jumpRulerTo(event.clientY, true);
+    const rect = rulerTrack.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    if (y < RULER_EDGE_ZONE || y > rect.height - RULER_EDGE_ZONE) {
+      updateRulerEdgeMode(event.clientY);
+      return;
+    }
+    setRulerEdgeDirection(0);
+    jumpRulerTo(event.clientY);
     return;
   }
   const tick = nearestRulerTick(event.clientY);
   if (tick) showRulerTip(tick);
   else hideRulerTip();
+});
+
+rulerTrack.addEventListener('keydown', (event) => {
+  if (!rulerTicks.length) return;
+  let nextIndex;
+  switch (event.key) {
+    case 'ArrowUp': nextIndex = rulerCurrentIndex - 1; break;
+    case 'ArrowDown': nextIndex = rulerCurrentIndex + 1; break;
+    case 'PageUp': nextIndex = rulerCurrentIndex - 5; break;
+    case 'PageDown': nextIndex = rulerCurrentIndex + 5; break;
+    case 'Home': nextIndex = 0; break;
+    case 'End': nextIndex = rulerTicks.length - 1; break;
+    default: return;
+  }
+  event.preventDefault();
+  goToRulerIndex(nextIndex);
 });
 
 rulerTrack.addEventListener('pointerleave', () => {
@@ -1814,7 +1880,33 @@ function updateAssistantContent(contentEl, ctx) {
   html += renderMarkdown(ctx.currentText);
   html += '<span class="streaming-cursor"></span>';
 
+  // Remember which tool bodies the user expanded/collapsed before the rebuild.
+  const previousToolIds = new Set();
+  const openToolIds = new Set();
+  contentEl.querySelectorAll('.tool-block').forEach(block => {
+    const id = block.dataset.toolId;
+    if (!id) return;
+    previousToolIds.add(id);
+    if (block.querySelector('.tool-body')?.classList.contains('open')) {
+      openToolIds.add(id);
+    }
+  });
+
   contentEl.innerHTML = html;
+
+  // Restore the user's toggle state; newly rendered tools keep their default
+  // (running tools open, completed tools closed).
+  contentEl.querySelectorAll('.tool-block').forEach(block => {
+    const id = block.dataset.toolId;
+    if (!id) return;
+    const header = block.querySelector('.tool-header');
+    const body = block.querySelector('.tool-body');
+    const shouldOpen = previousToolIds.has(id)
+      ? openToolIds.has(id)
+      : !!body?.classList.contains('open');
+    header?.classList.toggle('open', shouldOpen);
+    body?.classList.toggle('open', shouldOpen);
+  });
 
   // onclick attributes in renderToolCall/renderThinking already handle toggling.
   // No duplicate addEventListener needed — that would toggle twice per click.
