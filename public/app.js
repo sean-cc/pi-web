@@ -489,6 +489,11 @@ chatMessages.addEventListener('touchend', () => {
   lastTouchY = null;
 }, { passive: true });
 
+// Lazy-loaded images can change the scroll height after we pinned to bottom.
+chatMessages.addEventListener('load', () => {
+  if (stickToBottom) scrollToBottom();
+}, true);
+
 // force=true is for explicit jumps (session switch, sending a prompt) that
 // should always follow the latest output regardless of scroll position.
 function scrollToBottom(force = false) {
@@ -772,9 +777,57 @@ async function loadModelInfo() {
 
 // ── Message rendering ─────────────────────────────────────────────────────
 
+function captureMessageOpenState() {
+  const state = new Map();
+
+  $$('.msg', chatMessages).forEach(msgEl => {
+    const msgId = msgEl.dataset.id;
+    if (!msgId) return;
+
+    msgEl.querySelectorAll('.tool-block').forEach(block => {
+      const toolId = block.dataset.toolId;
+      if (!toolId) return;
+      state.set(`tool:${msgId}:${toolId}`, !!block.querySelector('.tool-body')?.classList.contains('open'));
+    });
+
+    msgEl.querySelectorAll('.thinking-block').forEach((block, index) => {
+      state.set(`thinking:${msgId}:${index}`, !!block.querySelector('.thinking-body')?.classList.contains('open'));
+    });
+  });
+
+  return state;
+}
+
+function restoreMessageOpenState(state) {
+  if (!state.size) return;
+
+  $$('.msg', chatMessages).forEach(msgEl => {
+    const msgId = msgEl.dataset.id;
+    if (!msgId) return;
+
+    msgEl.querySelectorAll('.tool-block').forEach(block => {
+      const toolId = block.dataset.toolId;
+      const key = `tool:${msgId}:${toolId}`;
+      if (!toolId || !state.has(key)) return;
+      const open = state.get(key);
+      block.querySelector('.tool-header')?.classList.toggle('open', open);
+      block.querySelector('.tool-body')?.classList.toggle('open', open);
+    });
+
+    msgEl.querySelectorAll('.thinking-block').forEach((block, index) => {
+      const key = `thinking:${msgId}:${index}`;
+      if (!state.has(key)) return;
+      const open = state.get(key);
+      block.querySelector('.thinking-header')?.classList.toggle('open', open);
+      block.querySelector('.thinking-body')?.classList.toggle('open', open);
+    });
+  });
+}
+
 function renderAllMessages({ forceScroll = true } = {}) {
   const previousScrollTop = chatMessages.scrollTop;
   const wasStick = stickToBottom;
+  const openState = captureMessageOpenState();
 
   // Remove existing messages
   const existing = $$('.msg', chatMessages);
@@ -789,6 +842,8 @@ function renderAllMessages({ forceScroll = true } = {}) {
   for (const msg of state.messages) {
     appendMessage(msg);
   }
+
+  restoreMessageOpenState(openState);
 
   if (forceScroll || wasStick) {
     // A freshly rendered transcript should open at the latest message.
@@ -922,6 +977,7 @@ async function sendPrompt(message) {
   // Streaming state
   let currentText = '';
   let currentThinking = '';
+  let activeThinkingText = '';
   let toolBlocks = []; // { id, name, input, result, isError, el }
   let thinkingBlockEl = null;
   let thinkingBodyEl = null;
@@ -953,6 +1009,8 @@ async function sendPrompt(message) {
       set currentText(v) { currentText = v; },
       get currentThinking() { return currentThinking; },
       set currentThinking(v) { currentThinking = v; },
+      get activeThinkingText() { return activeThinkingText; },
+      set activeThinkingText(v) { activeThinkingText = v; },
       toolBlocks,
       get thinkingBlockEl() { return thinkingBlockEl; },
       set thinkingBlockEl(v) { thinkingBlockEl = v; },
@@ -1058,14 +1116,18 @@ function handleSSEEvent(type, data, ctx) {
       contentEl.appendChild(block);
       ctx.thinkingBlockEl = block;
       ctx.thinkingBodyEl = block.querySelector('.thinking-body');
+      ctx.activeThinkingText = '';
       scrollToBottom();
       break;
     }
 
     case 'thinking': {
       ctx.currentThinking += data.delta;
+      ctx.activeThinkingText = (ctx.activeThinkingText || '') + data.delta;
       if (ctx.thinkingBodyEl) {
-        ctx.thinkingBodyEl.textContent = ctx.currentThinking;
+        // Show only this block's text; currentThinking still accumulates the
+        // full reasoning for the persisted assistant message.
+        ctx.thinkingBodyEl.textContent = ctx.activeThinkingText;
         scrollToBottom();
       }
       break;
@@ -1195,6 +1257,12 @@ function handleSSEEvent(type, data, ctx) {
       break;
 
     case 'message_start':
+      if (ctx.thinkingBlockEl) {
+        ctx.thinkingBlockEl.querySelector('.thinking-body')?.classList.remove('open');
+        ctx.thinkingBlockEl = null;
+        ctx.thinkingBodyEl = null;
+        ctx.activeThinkingText = '';
+      }
       showWorking(ctx);
       break;
 
@@ -2099,6 +2167,7 @@ window.selectModel = async function (provider, modelId) {
 window.__piWeb = {
   state,
   appendMessage,
+  renderAllMessages,
   handleSSEEvent,
   scrollToBottom,
   renderWorkingIndicator,

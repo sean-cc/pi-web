@@ -322,6 +322,7 @@ async function browserTests() {
     contentEl,
     currentText: '',
     currentThinking: '',
+    activeThinkingText: '',
     thinkingBlockEl: null,
     thinkingBodyEl: null,
     toolBlocks: [],
@@ -360,6 +361,14 @@ async function browserTests() {
     toolHeader?.className,
   );
   toolHeader?.click();
+
+  handleSSEEvent('message_start', {}, ctx);
+  handleSSEEvent('thinking_start', {}, ctx);
+  handleSSEEvent('thinking', { delta: 'second thought' }, ctx);
+  await wait(50);
+  const thinkingBlocks = contentEl.querySelectorAll('.thinking-block');
+  const lastThinkingText = thinkingBlocks[thinkingBlocks.length - 1]?.querySelector('.thinking-body')?.textContent;
+  check('new thinking block keeps its own text', lastThinkingText === 'second thought', lastThinkingText);
   check('text stream follows the bottom', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
 
   // ── Reading history must not move while output continues ────────────────
@@ -393,6 +402,32 @@ async function browserTests() {
     'jump button clears the new-output marker',
     jumpButton.classList.contains('hidden') && !jumpButton.classList.contains('has-new'),
     jumpButton.className,
+  );
+
+  // ── Full re-render preserves expanded blocks ─────────────────────────────
+  state.messages = [{
+    id: 'persist',
+    role: 'assistant',
+    content: 'done',
+    thinking: 'some reasoning',
+    toolCalls: [{ id: 'persist-tool', name: 'bash', input: { command: 'x' }, result: 'ok', isError: false }],
+    timestamp: new Date().toISOString(),
+  }];
+  document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
+  api.renderAllMessages();
+  await wait(80);
+  const persistMsg = document.querySelector('.msg[data-id="persist"]');
+  const persistTool = persistMsg?.querySelector('.tool-block');
+  const persistThinking = persistMsg?.querySelector('.thinking-block');
+  toggleToolBlock(persistTool.querySelector('.tool-header'));
+  toggleToolBlock(persistThinking.querySelector('.thinking-body'));
+  api.renderAllMessages({ forceScroll: false });
+  await wait(80);
+  const reRendered = document.querySelector('.msg[data-id="persist"]');
+  check(
+    'full re-render preserves expanded blocks',
+    Boolean(reRendered?.querySelector('.tool-block .tool-body.open')) && Boolean(reRendered?.querySelector('.thinking-block .thinking-body.open')),
+    reRendered ? 'ok' : 'message missing',
   );
 
   // ── Ruler: all prompts retained, min gap, click and keyboard ────────────
