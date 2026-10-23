@@ -1242,6 +1242,27 @@ body {
   margin: 12px 0;
   color: var(--danger);
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.msg-error-text {
+  flex: 1;
+  min-width: 0;
+}
+.msg-error-retry {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.msg-error-retry:hover {
+  background: rgba(239, 68, 68, 0.12);
 }
 
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */

@@ -837,11 +837,14 @@ function startSessionPoll(sid) {
   }, 1000);
 }
 
-async function sendPrompt(message) {
+async function sendPrompt(message, options = {}) {
   if (state.isStreaming || state.uploading > 0) return;
   const sid = state.sessionId;
-  const attachments = state.pendingAttachments.slice();
+  const retryAttachments = Array.isArray(options.attachments) ? options.attachments : null;
+  const attachments = (retryAttachments || state.pendingAttachments).slice();
   if (!message.trim() && attachments.length === 0) return;
+
+  chatMessages.querySelectorAll('.msg-error').forEach(el => el.remove());
 
   const images = attachments
     .filter((a) => attachmentIsImage(a) && a.data)
@@ -870,12 +873,15 @@ async function sendPrompt(message) {
   // Sending a prompt is an explicit jump to the latest output.
   scrollToBottom(true);
 
-  // Clear input and pending attachments
-  promptInput.value = '';
-  state.pendingAttachments = [];
-  renderAttachmentTray();
-  autoResize();
-  updateSendState();
+  // Clear the composer for a normal send. A retry keeps whatever the user
+  // has typed in the meantime.
+  if (!retryAttachments) {
+    promptInput.value = '';
+    state.pendingAttachments = [];
+    renderAttachmentTray();
+    autoResize();
+    updateSendState();
+  }
 
   // Start streaming
   setStreaming(true);
@@ -989,7 +995,7 @@ async function sendPrompt(message) {
       // optimistic user message was never persisted. Remove it instead of
       // leaving a ghost message that disappears on the next reload.
       removeOptimistic = true;
-      showError(err.message);
+      showError(err.message, () => sendPrompt(message, { attachments }));
     }
   } finally {
     state.currentStream = null;
@@ -1373,13 +1379,33 @@ function updateAssistantContent(contentEl, ctx) {
 
 // ── Error display ─────────────────────────────────────────────────────────
 
-function showError(message) {
+function showError(message, retry) {
+  chatMessages.querySelectorAll('.msg-error').forEach(el => el.remove());
+
   const div = document.createElement('div');
   div.className = 'msg-error';
-  div.textContent = `Error: ${message}`;
+
+  const text = document.createElement('span');
+  text.className = 'msg-error-text';
+  text.textContent = `Error: ${message}`;
+  div.appendChild(text);
+
+  if (typeof retry === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'msg-error-retry';
+    button.textContent = 'Retry';
+    button.addEventListener('click', () => {
+      div.remove();
+      retry();
+    });
+    div.appendChild(button);
+  } else {
+    setTimeout(() => div.remove(), 8000);
+  }
+
   chatMessages.appendChild(div);
   scrollToBottom();
-  setTimeout(() => div.remove(), 8000);
 }
 
 // ── Slash command palette ─────────────────────────────────────────────────

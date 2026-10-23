@@ -579,6 +579,41 @@ async function browserTests() {
     Boolean(document.querySelector('.msg-error')?.textContent.includes('simulated rejection')),
     document.querySelector('.msg-error')?.textContent,
   );
+  const retryButton = document.querySelector('.msg-error-retry');
+  check('HTTP rejection offers retry', Boolean(retryButton), retryButton?.className);
+
+  const retryFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    if (String(url).includes('/prompt')) {
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: text\ndata: {"delta":"retried"}\n\nevent: done\ndata: {}\n\n'));
+          controller.close();
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return retryFetch(url, opts);
+  };
+  retryButton?.click();
+
+  let retried = false;
+  for (let i = 0; i < 30; i++) {
+    await wait(100);
+    if (!api.state.isStreaming && api.state.messages.some(message => message.content === 'retried')) {
+      retried = true;
+      break;
+    }
+  }
+  window.fetch = retryFetch;
+  check(
+    'retry re-sends the rejected message',
+    retried && !document.querySelector('.msg-error'),
+    `streaming=${api.state.isStreaming} messages=${api.state.messages.length}`,
+  );
+
+  api.state.messages = [];
+  document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
 
   // ── Mid-stream disconnect recovery ───────────────────────────────────────
   const realFetch = window.fetch;
