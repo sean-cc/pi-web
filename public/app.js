@@ -342,45 +342,42 @@ function escapeHtml(text) {
 function renderMarkdown(text) {
   if (!text) return '';
 
-  // Extract code blocks to protect them
+  // Extract code blocks from the raw text first: the copy button needs the
+  // original code, and the placeholder protects it from escaping/formatting.
   const codeBlocks = [];
   let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    const langLabel = lang ? `<span class="code-header">${escapeHtml(lang)}<button class="copy-btn" data-code="${idx}">Copy</button></span>` : '';
     codeBlocks.push({ lang: lang || '', code: code.trimEnd() });
     return `\x00CODEBLOCK${idx}\x00`;
   });
 
-  // Tables (extract before inline processing so cell content stays raw)
+  // Tables are extracted from raw text too; cells are escaped later by
+  // renderInline so cell-level markdown still works.
   const tables = [];
   processed = processed.replace(
     /^\|(.+)\|\n\|([-:| ]+)\|\n(?:\|.+\|\n?)+/gm,
     (match) => {
       const idx = tables.length;
-      const lines = match.split('\n').filter(l => l.trim());
-      tables.push(lines);
+      tables.push(match.split('\n').filter(l => l.trim()));
       return `\x00TABLE${idx}\x00`;
     }
   );
 
-  // Inline code: use placeholders so the bold/italic pass below cannot
-  // escape the generated <code> tags and leak them as visible text.
+  // Inline code is protected before the global escape pass.
   const inlineCodes = [];
   processed = processed.replace(/`([^`]+)`/g, (_, code) => {
     const idx = inlineCodes.length;
-    inlineCodes.push(escapeHtml(code));
+    inlineCodes.push(code);
     return `\x00INLINECODE${idx}\x00`;
   });
 
-  // Bold
-  processed = processed.replace(/\*\*([^*]+)\*\*/g, (_, text) =>
-    `<strong>${escapeHtml(text)}</strong>`
-  );
+  // Escape all remaining text. This is the key XSS guard: everything that is
+  // not one of the generated tags below is now inert.
+  processed = escapeHtml(processed);
 
-  // Italic
-  processed = processed.replace(/\*([^*]+)\*/g, (_, text) =>
-    `<em>${escapeHtml(text)}</em>`
-  );
+  // Bold / italic (contents are already escaped).
+  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
   // Headers
   processed = processed.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
@@ -388,42 +385,49 @@ function renderMarkdown(text) {
   processed = processed.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   processed = processed.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
-  // Blockquotes
+  // Blockquotes (the leading > was escaped to &gt; above)
   processed = processed.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
 
   // Horizontal rules
   processed = processed.replace(/^---$/gm, '<hr>');
 
-  // Unordered lists
-  processed = processed.replace(/^[*-] (.+)$/gm, '<li>$1</li>');
-  // Wrap consecutive <li> in <ul>
-  processed = processed.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
-
-  // Ordered lists
-  processed = processed.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-  processed = processed.replace(/((?:<li>.*<\/li>\n?)+)/g, (match) => {
-    if (match.includes('<ul>')) return match; // already wrapped
-    return `<ol>${match}</ol>`;
+  // Lists: extract each block before paragraph wrapping so ordered and
+  // unordered items cannot be nested inside each other by later passes.
+  const lists = [];
+  processed = processed.replace(/^(?:\d+\. .+(?:\n|$))+/gm, (block) => {
+    const idx = lists.length;
+    const items = block.trimEnd().split('\n')
+      .map(line => `<li>${line.replace(/^\d+\.\s+/, '')}</li>`)
+      .join('');
+    lists.push(`<ol>${items}</ol>`);
+    return `\x00LIST${idx}\x00\n`;
+  });
+  processed = processed.replace(/^(?:[*-] .+(?:\n|$))+/gm, (block) => {
+    const idx = lists.length;
+    const items = block.trimEnd().split('\n')
+      .map(line => `<li>${line.replace(/^[*-]\s+/, '')}</li>`)
+      .join('');
+    lists.push(`<ul>${items}</ul>`);
+    return `\x00LIST${idx}\x00\n`;
   });
 
   // Paragraphs: wrap remaining text blocks in <p>
   processed = processed.replace(/\n\n+/g, '</p><p>');
   processed = '<p>' + processed + '</p>';
-  // Clean empty paragraphs
   processed = processed.replace(/<p>\s*<\/p>/g, '');
-  // Clean nested <p> inside block elements
-  processed = processed.replace(/<(h[1-6]|ul|ol|blockquote|pre|hr)[^>]*><\/p>/g, '<$1>');
-  processed = processed.replace(/<p><\/(h[1-6]|ul|ol|blockquote)>/g, '</$1>');
-  // Strip <p> wrapping around table placeholders
-  processed = processed.replace(/<p>\x00TABLE(\d+)\x00<\/p>/g, '\x00TABLE$1\x00');
+  // Keep block elements out of paragraph wrappers.
+  processed = processed.replace(/<p>\s*(<h[1-6][^>]*>)/g, '$1');
+  processed = processed.replace(/(<\/h[1-6]>)\s*<\/p>/g, '$1');
+  processed = processed.replace(/<p>\s*(<blockquote>)/g, '$1');
+  processed = processed.replace(/(<\/blockquote>)\s*<\/p>/g, '$1');
+  processed = processed.replace(/<p>\s*(<hr>)\s*<\/p>/g, '$1');
+  processed = processed.replace(/<p>\x00(?:TABLE|LIST|CODEBLOCK)(\d+)\x00<\/p>/g, (match, idx) => match.replace(/<p>|<\/p>/g, ''));
 
-  // Restore tables
-  processed = processed.replace(/\x00TABLE(\d+)\x00/g, (_, idx) => {
-    const lines = tables[parseInt(idx)];
-    return renderTable(lines);
-  });
+  // Restore lists and tables
+  processed = processed.replace(/\x00LIST(\d+)\x00/g, (_, idx) => lists[parseInt(idx)]);
+  processed = processed.replace(/\x00TABLE(\d+)\x00/g, (_, idx) => renderTable(tables[parseInt(idx)]));
 
-  // Restore code blocks
+  // Restore code blocks, using the raw code for both display and copy.
   processed = processed.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => {
     const block = codeBlocks[parseInt(idx)];
     const header = block.lang
@@ -434,27 +438,28 @@ function renderMarkdown(text) {
 
   // Restore inline code after all tag-generating passes.
   processed = processed.replace(/\x00INLINECODE(\d+)\x00/g, (_, idx) =>
-    `<code>${inlineCodes[parseInt(idx)]}</code>`
+    `<code>${escapeHtml(inlineCodes[parseInt(idx)])}</code>`
   );
+
+  // Final safety pass: block-level output must not sit inside <p>.
+  processed = processed.replace(/<p>\s*(<ul>|<ol>|<blockquote>|<h[1-6][^>]*>|<hr>|<div class="(?:table-wrapper|code-header)">|<pre>)/g, '$1');
+  processed = processed.replace(/(<\/ul>|<\/ol>|<\/blockquote>|<\/h[1-6]>|<\/div>|<\/pre>)\s*<\/p>/g, '$1');
+  processed = processed.replace(/<p>\s*<\/p>/g, '');
 
   return processed;
 }
 
 function renderInline(text) {
-  // Safe inline markdown rendering for table cells
+  // Table cells are raw here; escape once, then apply inline markdown.
   let result = escapeHtml(text);
-  // Inline code: protect with placeholders until after bold/italic so the
-  // generated <code> tags are not escaped into visible text.
   const inlineCodes = [];
   result = result.replace(/`([^`]+)`/g, (_, code) => {
     const idx = inlineCodes.length;
     inlineCodes.push(code);
     return `\x00INLINECODE${idx}\x00`;
   });
-  // Bold
-  result = result.replace(/\*\*([^*]+)\*\*/g, (_, t) => `<strong>${escapeHtml(t)}</strong>`);
-  // Italic
-  result = result.replace(/\*([^*]+)\*/g, (_, t) => `<em>${escapeHtml(t)}</em>`);
+  result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   result = result.replace(/\x00INLINECODE(\d+)\x00/g, (_, idx) => `<code>${inlineCodes[parseInt(idx)]}</code>`);
   return result;
 }
@@ -512,9 +517,15 @@ function renderToolCall(tc, index) {
     statusText = tc.isError ? 'Error' : 'Done';
   }
   const title = tc.name || 'Tool';
-  const output = tc.result !== null ? String(tc.result) : String(tc.pendingOutput || '');
+  let output = tc.result !== null ? String(tc.result) : String(tc.pendingOutput || '');
+  if (tc.result !== null) {
+    output = output.slice(0, 8000);
+  } else if (output.length > 13000) {
+    output = `… (${output.length - 12000} characters hidden) …\n` + output.slice(-12000);
+  }
+  const outputType = tc.result !== null ? 'result' : 'output';
   return `
-    <div class="tool-block" data-tool-index="${index}">
+    <div class="tool-block" data-tool-index="${index}" data-tool-id="${escapeAttr(tc.id ?? '')}">
       <div class="tool-header" onclick="toggleToolBlock(this)">
         <span class="tool-icon">🔧</span>
         <span class="tool-name">${escapeHtml(title)}</span>
@@ -523,7 +534,7 @@ function renderToolCall(tc, index) {
       </div>
       <div class="tool-body${tc.result !== null ? '' : ' open'}">
         <pre><code>${escapeHtml(JSON.stringify(tc.input || {}, null, 2))}</code></pre>
-        ${output ? `<pre data-type="result"><code>${escapeHtml(output.slice(0, 8000))}</code></pre>` : ''}
+        ${output ? `<pre data-type="${outputType}"><code>${escapeHtml(output)}</code></pre>` : ''}
       </div>
     </div>`;
 }
@@ -536,9 +547,7 @@ function renderThinking(thinking) {
         <span>💭 Thinking</span>
         <span class="tool-chevron">▶</span>
       </div>
-      <div class="thinking-body">
-        ${escapeHtml(thinking)}
-      </div>
+      <div class="thinking-body">${escapeHtml(thinking)}</div>
     </div>`;
 }
 
@@ -668,6 +677,12 @@ let rulerDragging = false;
 let hoveredTick = null;
 let rulerWindowOffset = 0;
 let rulerCurrentIndex = 0;
+let rulerOffsetsDirty = true;
+let rulerLastOffsetMeasure = 0;
+let rulerTicksVersion = 0;
+let rulerLastLayoutKey = '';
+let rulerLastCurrentVersion = -1;
+let rulerLastCurrentIndex = -1;
 const RULER_MIN_GAP = 9;
 
 function maxRulerScroll() {
@@ -695,6 +710,8 @@ function syncRulerTicks(messages) {
 
   hoveredTick = null;
   rulerTip.classList.remove('visible');
+  rulerOffsetsDirty = true;
+  rulerTicksVersion += 1;
   rulerTrack.querySelectorAll('.ruler-tick').forEach(el => el.remove());
   rulerTicks = messages.map((msgEl) => {
     const el = document.createElement('div');
@@ -743,11 +760,19 @@ function refreshRuler() {
     ? edgePadding * 2 + (count - 1) * RULER_MIN_GAP
     : trackHeight;
 
-  // Measure every prompt, then pick the one the reader is currently in.
-  rulerTicks.forEach((tick) => {
-    const rect = tick.msgEl.getBoundingClientRect();
-    tick.offset = Math.max(0, rect.top - containerRect.top + scrollTop);
-  });
+  // Measure prompt offsets on structure/layout changes, or at most a few
+  // times per second. During streaming, scrolling alone does not move prompts
+  // above the live message, so cached offsets stay valid and we avoid doing
+  // hundreds of layout reads on every animation frame.
+  const now = performance.now();
+  if (rulerOffsetsDirty || now - rulerLastOffsetMeasure > 200) {
+    rulerTicks.forEach((tick) => {
+      const rect = tick.msgEl.getBoundingClientRect();
+      tick.offset = Math.max(0, rect.top - containerRect.top + scrollTop);
+    });
+    rulerOffsetsDirty = false;
+    rulerLastOffsetMeasure = now;
+  }
 
   let currentIndex = 0;
   rulerTicks.forEach((tick, index) => {
@@ -786,15 +811,23 @@ function refreshRuler() {
     rulerWindowOffset = 0;
   }
 
-  rulerTicks.forEach((tick, index) => {
-    const stackY = count === 1 ? trackHeight / 2 : edgePadding + index * gap;
-    tick.y = stackY - rulerWindowOffset;
-    tick.el.style.top = `${tick.y}px`;
-  });
+  const layoutKey = `${rulerTicksVersion}|${gap}|${trackHeight}|${rulerWindowOffset}|${count}`;
+  if (layoutKey !== rulerLastLayoutKey) {
+    rulerTicks.forEach((tick, index) => {
+      const stackY = count === 1 ? trackHeight / 2 : edgePadding + index * gap;
+      tick.y = stackY - rulerWindowOffset;
+      tick.el.style.top = `${tick.y}px`;
+    });
+    rulerLastLayoutKey = layoutKey;
+  }
 
-  const currentTick = rulerTicks[currentIndex] || null;
-  for (const tick of rulerTicks) {
-    tick.el.classList.toggle('current', tick === currentTick);
+  if (rulerTicksVersion !== rulerLastCurrentVersion || currentIndex !== rulerLastCurrentIndex) {
+    const currentTick = rulerTicks[currentIndex] || null;
+    for (const tick of rulerTicks) {
+      tick.el.classList.toggle('current', tick === currentTick);
+    }
+    rulerLastCurrentVersion = rulerTicksVersion;
+    rulerLastCurrentIndex = currentIndex;
   }
 
   if (hoveredTick && (hoveredTick.y < -8 || hoveredTick.y > trackHeight + 8)) {
@@ -971,8 +1004,14 @@ new MutationObserver(scheduleRulerUpdate).observe(chatMessages, {
   subtree: true,
   characterData: true,
 });
-window.addEventListener('resize', scheduleRulerUpdate);
-chatMessages.addEventListener('load', scheduleRulerUpdate, true);
+window.addEventListener('resize', () => {
+  rulerOffsetsDirty = true;
+  scheduleRulerUpdate();
+});
+chatMessages.addEventListener('load', () => {
+  rulerOffsetsDirty = true;
+  scheduleRulerUpdate();
+}, true);
 if (window.ResizeObserver) {
   new ResizeObserver(scheduleRulerUpdate).observe(chatMessages);
 }
@@ -1032,6 +1071,7 @@ window.toggleToolBlock = function (headerOrBody) {
   }
   header.classList.toggle('open');
   body.classList.toggle('open');
+  rulerOffsetsDirty = true;
   scheduleRulerUpdate();
 };
 
@@ -1273,6 +1313,59 @@ function startSessionPoll(sid) {
   }, 1000);
 }
 
+// ── SSE parsing ───────────────────────────────────────────────────────────
+// Keep incomplete lines across network chunks: a `data:` payload can be split
+// anywhere, and dropping the tail loses thinking/text deltas.
+function emitSSEBlock(block, onEvent) {
+  let eventType = '';
+  const dataLines = [];
+
+  for (const rawLine of block.split('\n')) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    if (!line || line.startsWith(':')) continue;
+
+    const colon = line.indexOf(':');
+    const field = colon === -1 ? line : line.slice(0, colon);
+    let value = colon === -1 ? '' : line.slice(colon + 1);
+    if (value.startsWith(' ')) value = value.slice(1);
+
+    if (field === 'event') eventType = value;
+    else if (field === 'data') dataLines.push(value);
+  }
+
+  if (!dataLines.length) return;
+  const payload = dataLines.join('\n');
+  try {
+    onEvent(eventType, JSON.parse(payload));
+  } catch (err) {
+    console.warn('Failed to parse SSE event', eventType, err);
+  }
+}
+
+function createSSEParser(onEvent) {
+  let buffer = '';
+
+  return {
+    push(chunk) {
+      buffer += chunk;
+      // Normalise CRLF, including a CR that ended the previous chunk.
+      buffer = buffer.replace(/\r\n?/g, '\n');
+
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        emitSSEBlock(block, onEvent);
+        boundary = buffer.indexOf('\n\n');
+      }
+    },
+    end() {
+      if (buffer.trim()) emitSSEBlock(buffer, onEvent);
+      buffer = '';
+    },
+  };
+}
+
 async function sendPrompt(message) {
   if (state.isStreaming || state.uploading > 0) return;
   const sid = state.sessionId;
@@ -1353,6 +1446,8 @@ async function sendPrompt(message) {
 
   scrollToBottom();
 
+  let streamCtx = null;
+
   try {
     const res = await fetch(`/api/sessions/${sid}/prompt`, {
       method: 'POST',
@@ -1367,51 +1462,32 @@ async function sendPrompt(message) {
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    streamCtx = {
+      sessionId: sid,
+      contentEl, assistantEl, workingEl,
+      get currentText() { return currentText; },
+      set currentText(v) { currentText = v; },
+      get currentThinking() { return currentThinking; },
+      set currentThinking(v) { currentThinking = v; },
+      toolBlocks,
+      get thinkingBlockEl() { return thinkingBlockEl; },
+      set thinkingBlockEl(v) { thinkingBlockEl = v; },
+      get thinkingBodyEl() { return thinkingBodyEl; },
+      set thinkingBodyEl(v) { thinkingBodyEl = v; },
+      get activeToolBlock() { return activeToolBlock; },
+      set activeToolBlock(v) { activeToolBlock = v; },
+      get activeToolBody() { return activeToolBody; },
+      set activeToolBody(v) { activeToolBody = v; },
+    };
+    const parser = createSSEParser((type, data) => handleSSEEvent(type, data, streamCtx));
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Parse SSE events
-      const lines = buffer.split('\n');
-      buffer = '';
-
-      let eventType = '';
-      let eventData = '';
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          eventData = line.slice(6);
-          try {
-            const data = JSON.parse(eventData);
-            handleSSEEvent(eventType, data, {
-              sessionId: sid,
-              contentEl, assistantEl, workingEl,
-              get currentText() { return currentText; },
-              set currentText(v) { currentText = v; },
-              get currentThinking() { return currentThinking; },
-              set currentThinking(v) { currentThinking = v; },
-              toolBlocks,
-              get thinkingBlockEl() { return thinkingBlockEl; },
-              set thinkingBlockEl(v) { thinkingBlockEl = v; },
-              get thinkingBodyEl() { return thinkingBodyEl; },
-              set thinkingBodyEl(v) { thinkingBodyEl = v; },
-              get activeToolBlock() { return activeToolBlock; },
-              set activeToolBlock(v) { activeToolBlock = v; },
-              get activeToolBody() { return activeToolBody; },
-              set activeToolBody(v) { activeToolBody = v; },
-            });
-          } catch {}
-          eventType = '';
-          eventData = '';
-        }
-      }
+      parser.push(decoder.decode(value, { stream: true }));
     }
+    parser.push(decoder.decode());
+    parser.end();
   } catch (err) {
     if (err.name === 'AbortError') {
       // User aborted
@@ -1428,6 +1504,7 @@ async function sendPrompt(message) {
     // touch shared UI/state if this stream still owns the visible session and
     // its DOM is still mounted.
     if (state.sessionId === sid && assistantEl.isConnected) {
+      if (streamCtx) flushAssistantContentRender(contentEl, streamCtx);
       setStreaming(false);
 
       // Finalize assistant message in state
@@ -1455,6 +1532,12 @@ async function sendPrompt(message) {
   }
 }
 
+function findLiveToolBlock(contentEl, tb) {
+  const live = [...contentEl.querySelectorAll('.tool-block')]
+    .find(el => el.dataset.toolId === String(tb.id));
+  return live || tb.el;
+}
+
 function handleSSEEvent(type, data, ctx) {
   // Ignore events from a session that was switched away from (or whose DOM
   // was replaced). Otherwise a background stream can scroll the new session
@@ -1472,7 +1555,7 @@ function handleSSEEvent(type, data, ctx) {
         ctx.thinkingBodyEl = null;
       }
       ctx.currentText += data.delta;
-      updateAssistantContent(contentEl, ctx);
+      scheduleAssistantContentRender(contentEl, ctx);
       break;
     }
 
@@ -1512,6 +1595,7 @@ function handleSSEEvent(type, data, ctx) {
 
       const block = document.createElement('div');
       block.className = 'tool-block';
+      block.dataset.toolId = data.toolCallId || '';
       block.innerHTML = `
         <div class="tool-header open" onclick="toggleToolBlock(this)">
           <span class="tool-icon">🔧</span>
@@ -1539,8 +1623,11 @@ function handleSSEEvent(type, data, ctx) {
 
     case 'tool_update': {
       const tb = ctx.toolBlocks.find(t => t.id === data.toolCallId);
-      const body = tb?.el?.querySelector('.tool-body');
-      if (!tb || !body) break;
+      if (!tb) break;
+      const liveEl = findLiveToolBlock(contentEl, tb);
+      const body = liveEl?.querySelector('.tool-body');
+      if (!body) break;
+      tb.el = liveEl;
       const output = data.output || data.delta || '';
       tb.streamOutput = output;
       let pre = body.querySelector('pre[data-type="output"]');
@@ -1553,8 +1640,15 @@ function handleSSEEvent(type, data, ctx) {
       }
       const code = pre.querySelector('code');
       if (code) {
-        // Event output is cumulative, so replace instead of appending.
-        code.textContent = output;
+        // Event output is cumulative, so replace instead of appending. Keep
+        // only the tail of very large outputs to avoid multi-megabyte text
+        // nodes and expensive re-layouts.
+        const MAX_STREAM_OUTPUT = 12000;
+        const display = output.length > MAX_STREAM_OUTPUT
+          ? `… (${output.length - MAX_STREAM_OUTPUT} characters hidden) …\n` + output.slice(-MAX_STREAM_OUTPUT)
+          : output;
+        tb.streamOutput = display;
+        code.textContent = display;
         scrollToBottom();
       }
       break;
@@ -1562,21 +1656,25 @@ function handleSSEEvent(type, data, ctx) {
 
     case 'tool_end': {
       const tb = ctx.toolBlocks.find(t => t.id === data.toolCallId);
-      if (tb && tb.el) {
-        const status = tb.el.querySelector('.tool-status');
-        if (data.isError) {
-          status.className = 'tool-status error';
-          status.textContent = 'Error';
-          tb.isError = true;
-        } else {
-          status.className = 'tool-status success';
-          status.textContent = 'Done';
+      if (tb) {
+        const liveEl = findLiveToolBlock(contentEl, tb);
+        tb.el = liveEl;
+        const status = liveEl?.querySelector('.tool-status');
+        if (status) {
+          if (data.isError) {
+            status.className = 'tool-status error';
+            status.textContent = 'Error';
+            tb.isError = true;
+          } else {
+            status.className = 'tool-status success';
+            status.textContent = 'Done';
+          }
         }
         tb.result = data.output || '';
         tb.streamOutput = '';
 
         // Add/replace result in body, reusing the streaming output node if any.
-        const body = tb.el.querySelector('.tool-body');
+        const body = liveEl?.querySelector('.tool-body');
         if (body && data.output !== undefined) {
           let resultPre = body.querySelector('pre[data-type="result"]')
             || body.querySelector('pre[data-type="output"]');
@@ -1592,10 +1690,10 @@ function handleSSEEvent(type, data, ctx) {
         }
 
         // Auto-toggle tool body
-        const header = tb.el.querySelector('.tool-header');
+        const header = liveEl?.querySelector('.tool-header');
         if (header) {
           header.classList.remove('open');
-          body.classList.remove('open');
+          body?.classList.remove('open');
         }
       }
       ctx.activeToolBlock = null;
@@ -1664,6 +1762,32 @@ function showWorking(ctx) {
 
 function hideWorking(ctx) {
   ctx?.workingEl?.classList.add('hidden');
+}
+
+let pendingStreamRender = null;
+
+// Coalesce text deltas to at most one render per frame. Rebuilding the whole
+// streamed message for every token is both O(n^2) and very layout-heavy.
+function scheduleAssistantContentRender(contentEl, ctx) {
+  if (pendingStreamRender?.contentEl === contentEl) return;
+  if (pendingStreamRender) cancelAnimationFrame(pendingStreamRender.raf);
+  pendingStreamRender = {
+    contentEl,
+    ctx,
+    raf: requestAnimationFrame(() => {
+      const job = pendingStreamRender;
+      pendingStreamRender = null;
+      if (job?.contentEl?.isConnected) updateAssistantContent(job.contentEl, job.ctx);
+    }),
+  };
+}
+
+function flushAssistantContentRender(contentEl, ctx) {
+  if (pendingStreamRender?.contentEl === contentEl) {
+    cancelAnimationFrame(pendingStreamRender.raf);
+    pendingStreamRender = null;
+  }
+  if (contentEl?.isConnected) updateAssistantContent(contentEl, ctx);
 }
 
 function updateAssistantContent(contentEl, ctx) {

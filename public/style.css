@@ -688,6 +688,8 @@ body {
   color: var(--text-tertiary);
   font-size: 13px;
   font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .thinking-body.open {
   display: block;
