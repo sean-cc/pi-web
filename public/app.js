@@ -66,6 +66,7 @@ const btnAbort = $('#btnAbort');
 const btnNewChat = $('#btnNewChat');
 const sessionList = $('#sessionList');
 const sidebarModel = $('#sidebarModel');
+const sidebarUsage = $('#sidebarUsage');
 const attachmentTray = $('#attachmentTray');
 const fileInput = $('#fileInput');
 const btnAttach = $('#btnAttach');
@@ -281,6 +282,108 @@ function messageCopyText(msg) {
   return String(msg.content || '');
 }
 
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  return {
+    input: Number(usage.input) || 0,
+    output: Number(usage.output) || 0,
+    cacheRead: Number(usage.cacheRead) || 0,
+    cacheWrite: Number(usage.cacheWrite) || 0,
+    reasoning: Number(usage.reasoning) || 0,
+    totalTokens: Number(usage.totalTokens) || 0,
+    cost: typeof usage.cost === 'number' ? usage.cost : Number(usage.cost?.total) || 0,
+  };
+}
+
+function mergeUsage(existing, next) {
+  const a = normalizeUsage(existing);
+  const b = normalizeUsage(next);
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    reasoning: a.reasoning + b.reasoning,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cost: a.cost + b.cost,
+  };
+}
+
+function sumUsage(messages) {
+  let total = null;
+  for (const msg of messages || []) {
+    if (!msg || msg.role !== 'assistant') continue;
+    const usage = normalizeUsage(msg.usage);
+    if (!usage) continue;
+    total = mergeUsage(total, usage);
+  }
+  return total;
+}
+
+function formatTokenCount(value) {
+  const number = Number(value) || 0;
+  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(number >= 10_000_000 ? 0 : 1)}M`;
+  if (number >= 1_000) return `${(number / 1_000).toFixed(number >= 10_000 ? 0 : 1)}k`;
+  return String(number);
+}
+
+function formatCost(value) {
+  const cost = Number(value) || 0;
+  if (cost <= 0) return '';
+  return cost < 0.01 ? `$${cost.toFixed(6)}` : `$${cost.toFixed(4)}`;
+}
+
+function formatUsageLabel(usage) {
+  if (!usage) return '';
+  const tokens = `↑${formatTokenCount(usage.input)} ↓${formatTokenCount(usage.output)}`;
+  const cost = formatCost(usage.cost);
+  return cost ? `${tokens} · ${cost}` : tokens;
+}
+
+function formatUsageTitle(usage) {
+  if (!usage) return '';
+  return `input ${usage.input.toLocaleString()} · output ${usage.output.toLocaleString()} · cache read ${usage.cacheRead.toLocaleString()} · cache write ${usage.cacheWrite.toLocaleString()} · cost ${formatCost(usage.cost) || '$0'}`;
+}
+
+function updateMessageMeta(el) {
+  const messages = el._messages || [];
+  const last = messages[messages.length - 1];
+  const timeEl = el.querySelector('.msg-time');
+  const usageEl = el.querySelector('.msg-usage');
+
+  if (timeEl) {
+    const date = last ? new Date(last.timestamp) : null;
+    const valid = date && !Number.isNaN(date.getTime());
+    timeEl.textContent = valid ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    timeEl.dateTime = valid ? date.toISOString() : '';
+    timeEl.title = valid ? date.toLocaleString() : '';
+  }
+
+  if (usageEl) {
+    const usage = sumUsage(messages);
+    usageEl.textContent = formatUsageLabel(usage);
+    usageEl.title = formatUsageTitle(usage);
+    usageEl.classList.toggle('hidden', !usage);
+  }
+}
+
+function updateSidebarUsage() {
+  if (!sidebarUsage) return;
+  const usage = sumUsage(state.messages);
+  if (!usage) {
+    sidebarUsage.textContent = '';
+    sidebarUsage.title = '';
+    sidebarUsage.classList.add('hidden');
+    return;
+  }
+  const cost = formatCost(usage.cost);
+  sidebarUsage.textContent = `↑${formatTokenCount(usage.input)} ↓${formatTokenCount(usage.output)}${cost ? ` · ${cost}` : ''}`;
+  sidebarUsage.title = `Session totals — ${formatUsageTitle(usage)}`;
+  sidebarUsage.classList.remove('hidden');
+}
+
 function groupCopyText(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
   if (messages[0].role === 'user') return messageCopyText(messages[0]);
@@ -314,10 +417,11 @@ function appendMessage(msg) {
       && last?.classList.contains('msg-assistant')
       && Array.isArray(last._messages)) {
     const step = createMessageStep(msg);
-    last.querySelector('.msg-content')?.appendChild(step);
+    last.querySelector('.msg-steps')?.appendChild(step);
     last._messages.push(msg);
     attachCodeCopyHandlers(step);
     updateMessageCopyButton(last);
+    updateMessageMeta(last);
     if (!stickToBottom) markNewOutput();
     scrollToBottom();
     return last;
@@ -330,6 +434,7 @@ function appendMessage(msg) {
   scrollToBottom();
   attachCodeCopyHandlers(el);
   updateMessageCopyButton(el);
+  updateMessageMeta(el);
 
   const messageCopyBtn = el.querySelector('.msg-copy-btn');
   messageCopyBtn?.addEventListener('click', (event) => {
@@ -776,6 +881,7 @@ function renderAllMessages({ forceScroll = true } = {}) {
   }
 
   restoreMessageOpenState(openState);
+  updateSidebarUsage();
 
   if (forceScroll || wasStick) {
     // A freshly rendered transcript should open at the latest message.
@@ -901,16 +1007,17 @@ async function sendPrompt(message, options = {}) {
 
   // Keep the streamed content in its own container so the Working indicator
   // can live below it and survive every innerHTML rebuild.
+  const msgStepsEl = $('.msg-steps', assistantEl) || msgContentEl;
   const contentEl = document.createElement('div');
   contentEl.className = 'msg-stream';
-  msgContentEl.appendChild(contentEl);
+  msgStepsEl.appendChild(contentEl);
 
   const workingEl = document.createElement('div');
   workingEl.className = 'working-indicator';
   workingEl.setAttribute('role', 'status');
   workingEl.setAttribute('aria-live', 'polite');
   workingEl.innerHTML = WORKING_INDICATOR_INNER;
-  msgContentEl.appendChild(workingEl);
+  msgStepsEl.appendChild(workingEl);
 
   // Streaming state
   let currentText = '';
@@ -1235,7 +1342,17 @@ function handleSSEEvent(type, data, ctx) {
       hideWorking(ctx);
       break;
 
-    case 'message_end':
+    case 'message_end': {
+      const usage = normalizeUsage(data.usage);
+      if (ctx.assistantMsg) {
+        if (usage) ctx.assistantMsg.usage = mergeUsage(ctx.assistantMsg.usage, usage);
+        if (data.timestamp) ctx.assistantMsg.timestamp = data.timestamp;
+      }
+      if (ctx.assistantEl) updateMessageMeta(ctx.assistantEl);
+      updateSidebarUsage();
+      break;
+    }
+
     case 'turn_end':
     case 'turn_start':
       break;
@@ -2157,6 +2274,7 @@ window.__piWeb = {
   appendMessage,
   renderAllMessages,
   sendPrompt,
+  updateSidebarUsage,
   handleSSEEvent,
   scrollToBottom,
   renderWorkingIndicator,

@@ -312,14 +312,16 @@ async function browserTests() {
   const assistantEl = appendMessage(assistant);
   const contentEl = document.createElement('div');
   contentEl.className = 'msg-stream';
-  assistantEl.querySelector('.msg-content').appendChild(contentEl);
+  assistantEl.querySelector('.msg-steps').appendChild(contentEl);
   const workingEl = document.createElement('div');
   workingEl.className = 'working-indicator';
   workingEl.innerHTML = renderWorkingIndicator();
-  assistantEl.querySelector('.msg-content').appendChild(workingEl);
+  assistantEl.querySelector('.msg-steps').appendChild(workingEl);
   const ctx = {
     sessionId: state.sessionId,
     contentEl,
+    assistantEl,
+    assistantMsg: assistant,
     currentText: '',
     currentThinking: '',
     activeThinkingText: '',
@@ -370,6 +372,30 @@ async function browserTests() {
   const lastThinkingText = thinkingBlocks[thinkingBlocks.length - 1]?.querySelector('.thinking-body')?.textContent;
   check('new thinking block keeps its own text', lastThinkingText === 'second thought', lastThinkingText);
   check('text stream follows the bottom', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
+
+  handleSSEEvent('message_end', {
+    usage: { input: 120, output: 30, cacheRead: 1000, cacheWrite: 0, totalTokens: 1150, cost: { total: 0.0012 } },
+    timestamp: '2026-01-02T03:04:05.000Z',
+  }, ctx);
+  await wait(50);
+  const liveTime = assistantEl.querySelector('.msg-time')?.textContent || '';
+  const liveUsage = assistantEl.querySelector('.msg-usage')?.textContent || '';
+  check(
+    'live message has a timestamp',
+    /\d{1,2}:\d{2}/.test(liveTime),
+    liveTime,
+  );
+  check(
+    'live message shows token usage',
+    liveUsage.includes('↑120') && liveUsage.includes('↓30'),
+    liveUsage,
+  );
+  check(
+    'sidebar shows session token usage',
+    !document.querySelector('#sidebarUsage')?.classList.contains('hidden') &&
+      document.querySelector('#sidebarUsage')?.textContent.includes('↑120'),
+    document.querySelector('#sidebarUsage')?.textContent,
+  );
 
   // ── Reading history must not move while output continues ────────────────
   chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
@@ -491,7 +517,8 @@ async function browserTests() {
 
   const groupOne = {
     id: 'group_one', role: 'assistant', content: 'copy **me**',
-    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+    toolCalls: [], thinking: '', timestamp: '2026-01-02T03:04:05.000Z',
+    usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 110, cost: 0.001 },
   };
   const groupTwo = {
     id: 'group_two', role: 'assistant', content: '', thinking: 'step two reasoning',
@@ -500,7 +527,8 @@ async function browserTests() {
   };
   const groupThree = {
     id: 'group_three', role: 'assistant', content: 'final text',
-    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+    toolCalls: [], thinking: '', timestamp: '2026-01-02T03:05:05.000Z',
+    usage: { input: 50, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 55, cost: 0.0005 },
   };
   api.state.messages.push(groupOne, groupTwo, groupThree);
   const groupEl = api.appendMessage(groupOne);
@@ -527,6 +555,17 @@ async function browserTests() {
     'grouped reply has one copy button',
     groupEl.querySelectorAll('.msg-copy-btn').length === 1,
     `buttons=${groupEl.querySelectorAll('.msg-copy-btn').length}`,
+  );
+  check(
+    'grouped reply sums token usage',
+    (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↑150') &&
+      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↓15'),
+    groupEl.querySelector('.msg-usage')?.textContent,
+  );
+  check(
+    'grouped reply has one timestamp',
+    /\d{1,2}:\d{2}/.test(groupEl.querySelector('.msg-time')?.textContent || ''),
+    groupEl.querySelector('.msg-time')?.textContent,
   );
 
   api.state.messages = [];

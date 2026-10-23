@@ -323,6 +323,21 @@ function extractToolOutput(result) {
 }
 
 // Convert AgentMessage to a frontend-friendly format
+function formatUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  return {
+    input: Number(usage.input) || 0,
+    output: Number(usage.output) || 0,
+    cacheRead: Number(usage.cacheRead) || 0,
+    cacheWrite: Number(usage.cacheWrite) || 0,
+    reasoning: Number(usage.reasoning) || 0,
+    totalTokens: Number(usage.totalTokens) || 0,
+    cost: typeof usage.cost === 'number'
+      ? usage.cost
+      : Number(usage.cost?.total) || 0,
+  };
+}
+
 function formatMessages(messages) {
   const result = [];
   const toolCallsById = new Map();
@@ -388,6 +403,7 @@ function formatMessages(messages) {
       toolCalls,
       thinking: thinking.trim(),
       images,
+      usage: formatUsage(msg.usage),
       timestamp: msg.timestamp || new Date().toISOString(),
     });
   }
@@ -870,7 +886,10 @@ const server = http.createServer(async (req, res) => {
           break;
 
         case 'message_end':
-          send('message_end', {});
+          send('message_end', {
+            usage: formatUsage(event.message?.usage),
+            timestamp: event.message?.timestamp || null,
+          });
           break;
 
         case 'agent_start':

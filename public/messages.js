@@ -126,7 +126,13 @@ export function createMessageElement(msg) {
       <div class="msg-avatar">${avatar}</div>
       <button class="msg-copy-btn" type="button" title="Copy message text" aria-label="Copy message text">⧉</button>
     </div>
-    <div class="msg-content"></div>`;
-  div.querySelector('.msg-content').appendChild(createMessageStep(msg));
+    <div class="msg-content">
+      <div class="msg-steps"></div>
+      <div class="msg-meta">
+        <time class="msg-time"></time>
+        <span class="msg-usage"></span>
+      </div>
+    </div>`;
+  div.querySelector('.msg-steps').appendChild(createMessageStep(msg));
   return div;
 }
