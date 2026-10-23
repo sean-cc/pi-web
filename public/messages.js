@@ -93,28 +93,40 @@ export function renderThinking(thinking) {
     </div>`;
 }
 
+function renderMessageBody(msg) {
+  const isUser = msg.role === 'user';
+  const parsed = isUser ? parseAttachmentMessage(msg.content) : { text: msg.content, attachments: [] };
+  const attachmentsHtml = isUser ? renderMessageAttachments(parsed.attachments, msg.images) : '';
+
+  return `
+    ${msg.thinking ? renderThinking(msg.thinking) : ''}
+    ${msg.toolCalls && msg.toolCalls.length > 0
+      ? msg.toolCalls.map((tc, i) => renderToolCall(tc, i)).join('')
+      : ''}
+    ${attachmentsHtml}
+    ${parsed.text ? renderMarkdown(parsed.text) : ''}
+  `;
+}
+
+export function createMessageStep(msg) {
+  const step = document.createElement('div');
+  step.className = 'msg-step';
+  step.innerHTML = renderMessageBody(msg);
+  return step;
+}
+
 export function createMessageElement(msg) {
   const div = document.createElement('div');
   div.className = `msg msg-${msg.role}`;
   div.dataset.id = msg.id;
 
-  const isUser = msg.role === 'user';
-  const parsed = isUser ? parseAttachmentMessage(msg.content) : { text: msg.content, attachments: [] };
-  const attachmentsHtml = isUser ? renderMessageAttachments(parsed.attachments, msg.images) : '';
-  const avatar = isUser ? 'U' : 'P';
+  const avatar = msg.role === 'user' ? 'U' : 'P';
   div.innerHTML = `
     <div class="msg-aside">
       <div class="msg-avatar">${avatar}</div>
       <button class="msg-copy-btn" type="button" title="Copy message text" aria-label="Copy message text">⧉</button>
     </div>
-    <div class="msg-content">
-      ${msg.thinking ? renderThinking(msg.thinking) : ''}
-      ${msg.toolCalls && msg.toolCalls.length > 0
-        ? msg.toolCalls.map((tc, i) => renderToolCall(tc, i)).join('')
-        : ''}
-      ${attachmentsHtml}
-      ${parsed.text ? renderMarkdown(parsed.text) : ''}
-    </div>`;
-
+    <div class="msg-content"></div>`;
+  div.querySelector('.msg-content').appendChild(createMessageStep(msg));
   return div;
 }

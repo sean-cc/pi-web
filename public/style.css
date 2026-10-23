@@ -516,6 +516,12 @@ body {
   overflow-wrap: break-word;
 }
 
+.msg-step + .msg-step {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
 .msg-content p {
   margin-bottom: 12px;
 }

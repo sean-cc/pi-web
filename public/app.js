@@ -2,7 +2,7 @@ import { escapeHtml, renderMarkdown } from './markdown.js';
 import { createSSEParser } from './sse.js';
 import { createRuler } from './ruler.js';
 import { formatBytes, attachmentIsImage, attachmentLabel, escapeAttr } from './util.js';
-import { parseAttachmentMessage, renderToolCall, renderThinking, createMessageElement } from './messages.js';
+import { parseAttachmentMessage, renderToolCall, renderThinking, createMessageElement, createMessageStep } from './messages.js';
 
 // ── Theme ───────────────────────────────────────────────────────────────────
 const THEME_KEY = 'pi-web-theme';
@@ -281,27 +281,60 @@ function messageCopyText(msg) {
   return String(msg.content || '');
 }
 
-function appendMessage(msg) {
-  const el = createMessageElement(msg);
-  chatMessages.appendChild(el);
-  if (!stickToBottom) markNewOutput();
-  scrollToBottom();
-  // Attach copy handlers
-  el.querySelectorAll('.copy-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
+function groupCopyText(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return '';
+  if (messages[0].role === 'user') return messageCopyText(messages[0]);
+  return messages
+    .map(msg => String(msg.content || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function updateMessageCopyButton(el) {
+  const btn = el.querySelector('.msg-copy-btn');
+  if (!btn) return;
+  btn.classList.toggle('hidden', !groupCopyText(el._messages || []));
+}
+
+function attachCodeCopyHandlers(root) {
+  root.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
       copyButtonWithFeedback(btn);
     });
   });
-  const messageCopyBtn = el.querySelector('.msg-copy-btn');
-  if (messageCopyBtn) {
-    // Thinking-only and tool-only assistant steps have nothing useful to
-    // copy; keep the badge hidden until there is visible text.
-    messageCopyBtn.classList.toggle('hidden', !messageCopyText(msg));
+}
+
+function appendMessage(msg) {
+  const last = chatMessages.lastElementChild;
+
+  // Consecutive assistant steps belong to the same reply. Keep one P avatar
+  // and one copy button for the whole group.
+  if (msg.role === 'assistant'
+      && last?.classList.contains('msg-assistant')
+      && Array.isArray(last._messages)) {
+    const step = createMessageStep(msg);
+    last.querySelector('.msg-content')?.appendChild(step);
+    last._messages.push(msg);
+    attachCodeCopyHandlers(step);
+    updateMessageCopyButton(last);
+    if (!stickToBottom) markNewOutput();
+    scrollToBottom();
+    return last;
   }
+
+  const el = createMessageElement(msg);
+  el._messages = [msg];
+  chatMessages.appendChild(el);
+  if (!stickToBottom) markNewOutput();
+  scrollToBottom();
+  attachCodeCopyHandlers(el);
+  updateMessageCopyButton(el);
+
+  const messageCopyBtn = el.querySelector('.msg-copy-btn');
   messageCopyBtn?.addEventListener('click', (event) => {
     event.stopPropagation();
-    copyToClipboard(messageCopyText(msg)).then((ok) => {
+    copyToClipboard(groupCopyText(el._messages)).then((ok) => {
       if (!ok) return;
       clearTimeout(messageCopyBtn._copyTimer);
       messageCopyBtn.classList.add('copied');

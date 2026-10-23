@@ -477,7 +477,10 @@ async function browserTests() {
     `top=${Math.round(chat.scrollTop)} max=${Math.round(chat.scrollHeight - chat.clientHeight)}`,
   );
 
-  // ── Copy whole message ───────────────────────────────────────────────────
+  // ── Consecutive assistant steps group under one avatar ───────────────────
+  document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
+  api.state.messages = [];
+
   let copiedText = null;
   try {
     Object.defineProperty(navigator, 'clipboard', {
@@ -485,22 +488,49 @@ async function browserTests() {
       value: { writeText: async (text) => { copiedText = text; } },
     });
   } catch {}
-  const copyMsg = {
-    id: 'copy_test', role: 'assistant', content: 'copy **me**',
+
+  const groupOne = {
+    id: 'group_one', role: 'assistant', content: 'copy **me**',
     toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
   };
-  api.state.messages.push(copyMsg);
-  const copyEl = api.appendMessage(copyMsg);
-  const copyBtn = copyEl.querySelector('.msg-copy-btn');
-  copyBtn?.click();
+  const groupTwo = {
+    id: 'group_two', role: 'assistant', content: '', thinking: 'step two reasoning',
+    toolCalls: [{ id: 'group_tool', name: 'bash', input: {}, result: 'ok', isError: false }],
+    timestamp: new Date().toISOString(),
+  };
+  const groupThree = {
+    id: 'group_three', role: 'assistant', content: 'final text',
+    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+  };
+  api.state.messages.push(groupOne, groupTwo, groupThree);
+  const groupEl = api.appendMessage(groupOne);
+  api.appendMessage(groupTwo);
+  api.appendMessage(groupThree);
+
+  const groupEls = [...document.querySelectorAll('#chatMessages .msg-assistant')];
+  const groupCopyBtn = groupEl.querySelector('.msg-copy-btn');
+  groupCopyBtn?.click();
   await wait(80);
   check(
-    'message copy button copies the markdown',
-    copiedText === 'copy **me**' && copyBtn?.textContent === '✓' && !copyBtn?.classList.contains('hidden'),
-    `copied=${copiedText} label=${copyBtn?.textContent}`,
+    'consecutive assistant steps share one avatar',
+    groupEls.length === 1 &&
+      groupEl.querySelectorAll('.msg-step').length === 3 &&
+      groupEl.querySelectorAll('.msg-avatar').length === 1,
+    `groups=${groupEls.length} steps=${groupEl.querySelectorAll('.msg-step').length}`,
   );
-  api.state.messages.pop();
-  copyEl.remove();
+  check(
+    'grouped copy joins assistant text and ignores thinking/tools',
+    copiedText === 'copy **me**\n\nfinal text' && !groupCopyBtn?.classList.contains('hidden'),
+    `copied=${copiedText}`,
+  );
+  check(
+    'grouped reply has one copy button',
+    groupEl.querySelectorAll('.msg-copy-btn').length === 1,
+    `buttons=${groupEl.querySelectorAll('.msg-copy-btn').length}`,
+  );
+
+  api.state.messages = [];
+  document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
 
   const emptyCopyMsg = {
     id: 'copy_empty', role: 'assistant', content: '', thinking: 'reasoning only',
@@ -515,8 +545,8 @@ async function browserTests() {
     emptyCopyBtn?.classList.contains('hidden'),
     emptyCopyBtn?.className,
   );
-  api.state.messages.pop();
-  emptyCopyEl.remove();
+  api.state.messages = [];
+  document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
 
   // ── HTTP rejection removes optimistic messages ────────────────────────────
   const httpErrorFetch = window.fetch;
