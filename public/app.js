@@ -53,6 +53,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const chatMessages = $('#chatMessages');
+const welcomeTemplate = $('.welcome', chatMessages)?.cloneNode(true) || null;
 const chatRuler = $('#chatRuler');
 const rulerTrack = $('#rulerTrack');
 const rulerTip = $('#rulerTip');
@@ -699,10 +700,12 @@ function renderAllMessages({ forceScroll = true } = {}) {
   const existing = $$('.msg', chatMessages);
   existing.forEach(el => el.remove());
 
-  // Remove welcome if we have messages
+  // Show the welcome screen for an empty session; remove it otherwise.
   const welcome = $('.welcome', chatMessages);
-  if (welcome && state.messages.length > 0) {
-    welcome.remove();
+  if (state.messages.length > 0) {
+    welcome?.remove();
+  } else if (!welcome && welcomeTemplate) {
+    chatMessages.appendChild(welcomeTemplate.cloneNode(true));
   }
 
   for (const msg of state.messages) {

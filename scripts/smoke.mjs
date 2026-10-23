@@ -507,6 +507,11 @@ async function browserTests() {
     if (!api.state.isStreaming) { recovered = true; break; }
   }
   check('mid-stream disconnect recovers', promptFetched && recovered, `streaming=${api.state.isStreaming}`);
+  check(
+    'empty session restores the welcome screen',
+    Boolean(document.querySelector('#chatMessages .welcome')),
+    document.querySelector('#chatMessages')?.className,
+  );
 
   return results;
 }
