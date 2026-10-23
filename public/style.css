@@ -303,16 +303,20 @@ body {
   width: 20px;
   height: 5px;
   border-radius: 2.5px;
-  background: var(--accent);
-  opacity: 0.9;
+  background: var(--text-tertiary);
+  opacity: 0.75;
   transform: translateY(-50%);
   pointer-events: none;
-  transition: width 0.12s ease, opacity 0.12s ease;
+  transition: width 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
-.ruler-tick.hover,
+.ruler-tick.hover {
+  width: 26px;
+  opacity: 1;
+}
 .ruler-tick.current {
   width: 26px;
   opacity: 1;
+  background: var(--accent);
 }
 
 .ruler-tip {
