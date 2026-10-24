@@ -1,7 +1,7 @@
 {
   "name": "pi-web",
   "version": "1.0.0",
-  "description": "Local web workspace for pi coding agent",
+  "description": "Web workspace for pi coding agent",
   "type": "module",
   "license": "MIT",
   "engines": {

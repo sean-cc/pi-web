@@ -1,6 +1,6 @@
 # pi Web
 
-A local web workspace for [pi coding agent](https://github.com/earendil-works/pi-coding-agent): streaming chat, sessions, tools, a conversation timeline and token accounting.
+A web workspace for [pi coding agent](https://github.com/earendil-works/pi-coding-agent): streaming chat, sessions, tools, a conversation timeline and token accounting.
 
 ## Features
 
