@@ -130,7 +130,10 @@ export function createMessageElement(msg) {
       <div class="msg-steps"></div>
       <div class="msg-meta">
         <time class="msg-time"></time>
-        <span class="msg-usage"></span>
+        <span class="msg-meta-right">
+          ${msg.role === 'user' ? '<button class="msg-edit-btn" type="button" title="Edit and resend this message">Edit</button>' : ''}
+          <span class="msg-usage"></span>
+        </span>
       </div>
     </div>`;
   div.querySelector('.msg-steps').appendChild(createMessageStep(msg));

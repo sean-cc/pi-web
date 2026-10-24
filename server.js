@@ -339,7 +339,7 @@ function formatUsage(usage) {
   };
 }
 
-function formatMessages(messages) {
+function formatMessages(messages, entryIdByMessage = null) {
   const result = [];
   const toolCallsById = new Map();
   for (const msg of messages) {
@@ -399,6 +399,7 @@ function formatMessages(messages) {
 
     result.push({
       id: msg.id || crypto.randomUUID(),
+      entryId: entryIdByMessage?.get(msg) || null,
       role,
       content: content.trim(),
       toolCalls,
@@ -609,7 +610,13 @@ const server = http.createServer(async (req, res) => {
         const { id } = await openSession(found.path);
         entry = activeSessions.get(id);
       }
-      const msgs = formatMessages(entry.session.messages || []);
+      const entryIdByMessage = new Map();
+      for (const branchEntry of entry.session.sessionManager.getBranch()) {
+        if (branchEntry.type === 'message' && branchEntry.message) {
+          entryIdByMessage.set(branchEntry.message, branchEntry.id);
+        }
+      }
+      const msgs = formatMessages(entry.session.messages || [], entryIdByMessage);
       const m = entry.session.model;
       sendJSON(res, 200, {
         sessionId: entry.session.sessionId,
@@ -618,6 +625,66 @@ const server = http.createServer(async (req, res) => {
         model: m?.name || m?.id || 'unknown',
         currentModel: m ? { provider: m.provider, id: m.id, name: m.name || m.id, input: m.input || ['text'] } : null,
       });
+    } catch (err) {
+      sendJSON(res, 500, { error: err.message });
+    }
+    return;
+  }
+
+  // ── API: Branch from a historical user message ──────────────────────
+  const branchMatch = p.match(/^\/api\/sessions\/([^/]+)\/branch$/);
+  if (branchMatch && req.method === 'POST') {
+    const body = await parseBody(req);
+    const entryId = String(body.entryId || '');
+    if (!entryId) {
+      sendJSON(res, 400, { error: 'entryId is required' });
+      return;
+    }
+
+    try {
+      let entry = activeSessions.get(branchMatch[1]);
+      if (!entry) {
+        const sessions = await SessionManager.list(CWD);
+        const found = sessions.find(s => s.id === branchMatch[1]);
+        if (!found) { sendJSON(res, 404, { error: 'Session not found' }); return; }
+        const { id } = await openSession(found.path);
+        entry = activeSessions.get(id);
+      }
+
+      if (entry.session.isStreaming) {
+        sendJSON(res, 409, { error: 'Wait for the current response to finish' });
+        return;
+      }
+
+      const manager = entry.session.sessionManager;
+      const target = manager.getEntry(entryId);
+      const onActiveBranch = manager.getBranch().some(item => item.id === entryId);
+      if (!target || target.type !== 'message' || target.message?.role !== 'user' || !onActiveBranch) {
+        sendJSON(res, 400, { error: 'Cannot branch from this message' });
+        return;
+      }
+
+      let sessionId;
+      if (target.parentId) {
+        const branchPath = manager.createBranchedSession(target.parentId);
+        if (!branchPath) {
+          sendJSON(res, 500, { error: 'Could not create a branch' });
+          return;
+        }
+        const opened = await openSession(branchPath);
+        sessionId = opened.id;
+      } else {
+        // Editing the first message: start a fresh session with the same model.
+        const sm = SessionManager.create(CWD);
+        const { session } = await createAgentSession({
+          ...sessionOptions(sm),
+          model: entry.session.model,
+        });
+        sessionId = session.sessionId;
+        activeSessions.set(sessionId, { session, sessionManager: sm });
+      }
+
+      sendJSON(res, 200, { sessionId });
     } catch (err) {
       sendJSON(res, 500, { error: err.message });
     }

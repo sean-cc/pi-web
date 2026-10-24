@@ -31,6 +31,7 @@ const state = {
   currentStream: null,   // AbortController for fetch
   isStreaming: false,
   messages: [],          // { id, role, content, toolCalls, thinking, images, timestamp }
+  editing: null,         // { sessionId, entryId, previousValue } for edit-and-resend
   pendingAttachments: [], // attachments uploaded or uploading for the next message
   uploading: 0,
   commands: null,        // slash commands for the current session
@@ -71,6 +72,8 @@ const attachmentTray = $('#attachmentTray');
 const fileInput = $('#fileInput');
 const btnAttach = $('#btnAttach');
 const chatInputContainer = $('#chatInputContainer');
+const editBanner = $('#editBanner');
+const btnCancelEdit = $('#btnCancelEdit');
 const slashMenu = $('#slashMenu');
 const sessionModal = $('#sessionModal');
 const sessionPickerList = $('#sessionPickerList');
@@ -427,6 +430,32 @@ function attachCodeCopyHandlers(root) {
   });
 }
 
+function renderEditBanner() {
+  editBanner?.classList.toggle('hidden', !state.editing);
+}
+
+function startEditMessage(msg) {
+  if (!msg?.entryId || state.isStreaming) return;
+  const parsed = parseAttachmentMessage(msg.content || '');
+  if (parsed.attachments.length > 0) return;
+  state.editing = {
+    sessionId: state.sessionId,
+    entryId: msg.entryId,
+    previousValue: promptInput.value,
+  };
+  setComposerValue(parsed.text);
+  renderEditBanner();
+  promptInput.focus();
+}
+
+function cancelEdit() {
+  if (!state.editing) return;
+  const previous = state.editing.previousValue || '';
+  state.editing = null;
+  renderEditBanner();
+  setComposerValue(previous);
+}
+
 function appendMessage(msg) {
   const last = chatMessages.lastElementChild;
 
@@ -454,6 +483,19 @@ function appendMessage(msg) {
   attachCodeCopyHandlers(el);
   updateMessageCopyButton(el);
   updateMessageMeta(el);
+
+  const editBtn = el.querySelector('.msg-edit-btn');
+  if (editBtn) {
+    const parsed = msg.role === 'user' ? parseAttachmentMessage(msg.content || '') : null;
+    if (!msg.entryId || parsed?.attachments?.length) {
+      editBtn.classList.add('hidden');
+    } else {
+      editBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        startEditMessage(msg);
+      });
+    }
+  }
 
   const messageCopyBtn = el.querySelector('.msg-copy-btn');
   messageCopyBtn?.addEventListener('click', (event) => {
@@ -700,6 +742,8 @@ function renderSessionList(sessions) {
 
 window.switchSession = async function (sid) {
   if (sid === state.sessionId) return;
+  state.editing = null;
+  renderEditBanner();
   try {
     const data = await apiJSON('GET', `/api/sessions/${sid}`);
     state.sessionId = data.sessionId;
@@ -746,6 +790,8 @@ window.deleteSession = async function (e, sid) {
 };
 
 async function createNewSession() {
+  state.editing = null;
+  renderEditBanner();
   try {
     const data = await apiJSON('POST', '/api/sessions');
     state.sessionId = data.sessionId;
@@ -968,6 +1014,22 @@ async function sendPrompt(message, options = {}) {
   const retryAttachments = Array.isArray(options.attachments) ? options.attachments : null;
   const attachments = (retryAttachments || state.pendingAttachments).slice();
   if (!message.trim() && attachments.length === 0) return;
+
+  if (state.editing && !options.skipEdit) {
+    const edit = state.editing;
+    try {
+      const result = await apiJSON('POST', `/api/sessions/${edit.sessionId}/branch`, {
+        entryId: edit.entryId,
+      });
+      state.editing = null;
+      renderEditBanner();
+      await switchSession(result.sessionId);
+      return sendPrompt(message, { ...options, skipEdit: true });
+    } catch (err) {
+      showError(`Could not start a branch: ${err.message}`);
+      return;
+    }
+  }
 
   chatMessages.querySelectorAll('.msg-error').forEach(el => el.remove());
 
@@ -2167,6 +2229,7 @@ btnAbort.addEventListener('click', async () => {
 });
 
 $('#btnThemeToggle').addEventListener('click', toggleTheme);
+btnCancelEdit?.addEventListener('click', cancelEdit);
 
 // Model selector
 $('#btnModelSelector').addEventListener('click', openModelSelector);

@@ -554,12 +554,34 @@ body {
 .msg-time {
   flex-shrink: 0;
 }
+.msg-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .msg-usage {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .msg-usage.hidden {
+  display: none !important;
+}
+.msg-edit-btn {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.msg-edit-btn:hover {
+  color: var(--accent);
+}
+.msg-edit-btn.hidden {
   display: none !important;
 }
 
@@ -856,6 +878,35 @@ body {
 /* ── Input Area ─────────────────────────────────────────────────────────── */
 .chat-input-area {
   padding: 12px calc((100vw - 780px) / 2) 20px;
+}
+
+.edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.edit-banner button {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.edit-banner button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .chat-input-container {

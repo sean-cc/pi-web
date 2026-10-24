@@ -588,6 +588,94 @@ async function browserTests() {
   api.state.messages = [];
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
 
+  // ── Edit and resend a historical user message ────────────────────────────
+  const editMsg = {
+    id: 'edit_test', entryId: 'entry_edit', role: 'user', content: 'editable text',
+    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+  };
+  api.state.messages.push(editMsg);
+  const editEl = api.appendMessage(editMsg);
+  const editBtn = editEl.querySelector('.msg-edit-btn');
+  check(
+    'edit button appears for historical user messages',
+    Boolean(editBtn) && !editBtn.classList.contains('hidden'),
+    editBtn?.className,
+  );
+  editBtn?.click();
+  await wait(30);
+  check(
+    'edit loads the message into the composer',
+    !document.querySelector('#editBanner')?.classList.contains('hidden') &&
+      document.querySelector('#promptInput')?.value === 'editable text' &&
+      api.state.editing?.entryId === 'entry_edit',
+    document.querySelector('#promptInput')?.value,
+  );
+  document.querySelector('#btnCancelEdit')?.click();
+  await wait(30);
+  check(
+    'cancel edit closes the banner and restores the composer',
+    document.querySelector('#editBanner')?.classList.contains('hidden') &&
+      document.querySelector('#promptInput')?.value === '' &&
+      !api.state.editing,
+    document.querySelector('#promptInput')?.value,
+  );
+  api.state.messages.pop();
+  editEl.remove();
+
+  // ── Edit resend branches, switches and sends ─────────────────────────────
+  const branchMsg = {
+    id: 'edit_branch', entryId: 'entry_branch', role: 'user', content: 'branch text',
+    toolCalls: [], thinking: '', timestamp: new Date().toISOString(),
+  };
+  api.state.messages.push(branchMsg);
+  const branchEl = api.appendMessage(branchMsg);
+  branchEl.querySelector('.msg-edit-btn')?.click();
+  await wait(20);
+
+  const realBranchFetch = window.fetch;
+  const branchCalls = [];
+  window.fetch = async (url, opts) => {
+    const target = String(url);
+    if (target.includes('/branch')) {
+      branchCalls.push(JSON.parse(opts?.body || '{}'));
+      return new Response(JSON.stringify({ sessionId: 'smoke-branch' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (target.includes('/api/sessions/smoke-branch') && (!opts?.method || opts.method === 'GET')) {
+      return new Response(JSON.stringify({
+        sessionId: 'smoke-branch', messages: [], isStreaming: false, model: 'Smoke',
+        currentModel: { provider: 'smoke', id: 'smoke', name: 'Smoke' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (target.includes('/prompt')) {
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: text\ndata: {"delta":"edited reply"}\n\nevent: done\ndata: {}\n\n'));
+          controller.close();
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return realBranchFetch(url, opts);
+  };
+
+  try {
+    await api.sendPrompt('edited text');
+  } finally {
+    window.fetch = realBranchFetch;
+  }
+  check(
+    'edit resend branches, switches and sends',
+    api.state.sessionId === 'smoke-branch' &&
+      branchCalls[0]?.entryId === 'entry_branch' &&
+      api.state.messages.at(-1)?.content === 'edited reply' &&
+      document.querySelector('#editBanner')?.classList.contains('hidden'),
+    `session=${api.state.sessionId} branch=${JSON.stringify(branchCalls[0])} last=${api.state.messages.at(-1)?.content}`,
+  );
+  await window.switchSession('smoke');
+
   // ── HTTP rejection removes optimistic messages ────────────────────────────
   const httpErrorFetch = window.fetch;
   window.fetch = async (url, opts) => {
