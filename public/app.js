@@ -434,6 +434,15 @@ function renderEditBanner() {
   editBanner?.classList.toggle('hidden', !state.editing);
 }
 
+function refreshMessageEditButton(msg) {
+  if (!msg?.id) return;
+  const el = document.querySelector(`#chatMessages .msg[data-id="${CSS.escape(msg.id)}"]`);
+  const button = el?.querySelector('.msg-edit-btn');
+  if (!button) return;
+  const parsed = parseAttachmentMessage(msg.content || '');
+  button.classList.toggle('hidden', !msg.entryId || parsed.attachments.length > 0);
+}
+
 function startEditMessage(msg) {
   if (!msg?.entryId || state.isStreaming) return;
   const parsed = parseAttachmentMessage(msg.content || '');
@@ -487,14 +496,11 @@ function appendMessage(msg) {
   const editBtn = el.querySelector('.msg-edit-btn');
   if (editBtn) {
     const parsed = msg.role === 'user' ? parseAttachmentMessage(msg.content || '') : null;
-    if (!msg.entryId || parsed?.attachments?.length) {
-      editBtn.classList.add('hidden');
-    } else {
-      editBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        startEditMessage(msg);
-      });
-    }
+    editBtn.classList.toggle('hidden', !msg.entryId || Boolean(parsed?.attachments?.length));
+    editBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (msg.entryId) startEditMessage(msg);
+    });
   }
 
   const messageCopyBtn = el.querySelector('.msg-copy-btn');
@@ -1138,7 +1144,7 @@ async function sendPrompt(message, options = {}) {
     const decoder = new TextDecoder();
     streamCtx = {
       sessionId: sid,
-      contentEl, assistantEl, assistantMsg, workingEl,
+      contentEl, assistantEl, assistantMsg, userMsg, workingEl,
       get currentText() { return currentText; },
       set currentText(v) { currentText = v; },
       get currentThinking() { return currentThinking; },
@@ -1440,6 +1446,10 @@ function handleSSEEvent(type, data, ctx) {
 
     case 'done':
       hideWorking(ctx);
+      if (data.userEntryId && ctx.userMsg) {
+        ctx.userMsg.entryId = data.userEntryId;
+        refreshMessageEditButton(ctx.userMsg);
+      }
       break;
 
     case 'warning':

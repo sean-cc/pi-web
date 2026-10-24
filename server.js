@@ -977,6 +977,10 @@ const server = http.createServer(async (req, res) => {
       }
     });
 
+    const previousLastUser = [...session.sessionManager.getBranch()]
+      .reverse()
+      .find(entry => entry.type === 'message' && entry.message?.role === 'user');
+
     try {
       const promptOptions = {
         expandPromptTemplates: true,
@@ -990,7 +994,12 @@ const server = http.createServer(async (req, res) => {
 
       startKeepAwake();
       await session.prompt(message, promptOptions);
-      send('done', {});
+
+      const lastUser = [...session.sessionManager.getBranch()]
+        .reverse()
+        .find(entry => entry.type === 'message' && entry.message?.role === 'user');
+      const userEntryId = lastUser && lastUser.id !== previousLastUser?.id ? lastUser.id : null;
+      send('done', { userEntryId });
     } catch (err) {
       send('error', { error: err.message });
     } finally {
