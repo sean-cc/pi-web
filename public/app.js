@@ -1030,6 +1030,7 @@ async function sendPrompt(message, options = {}) {
       state.editing = null;
       renderEditBanner();
       await switchSession(result.sessionId);
+      showNotice('Started a new branch. The original conversation is preserved.');
       return sendPrompt(message, { ...options, skipEdit: true });
     } catch (err) {
       showError(`Could not start a branch: ${err.message}`);
