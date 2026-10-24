@@ -104,7 +104,7 @@ function renderMessageBody(msg) {
       ? msg.toolCalls.map((tc, i) => renderToolCall(tc, i)).join('')
       : ''}
     ${attachmentsHtml}
-    ${parsed.text ? renderMarkdown(parsed.text) : ''}
+    ${parsed.text ? `<div class="msg-answer">${renderMarkdown(parsed.text)}</div>` : ''}
   `;
 }
 
@@ -120,13 +120,20 @@ export function createMessageElement(msg) {
   div.className = `msg msg-${msg.role}`;
   div.dataset.id = msg.id;
 
-  const avatar = msg.role === 'user' ? 'U' : 'P';
+  const isAssistant = msg.role !== 'user';
+  const avatar = isAssistant ? 'P' : 'U';
+
+  // Reasoning and tool calls are collapsed by default once a reply is done.
+  // A live reply is expanded again right after it is appended.
+  if (isAssistant) div.classList.add('details-collapsed');
+
   div.innerHTML = `
     <div class="msg-aside">
       <div class="msg-avatar">${avatar}</div>
       <button class="msg-copy-btn" type="button" title="Copy message text" aria-label="Copy message text">⧉</button>
     </div>
     <div class="msg-content">
+      ${isAssistant ? '<button class="btn-msg-details hidden" type="button" aria-expanded="true"><span class="btn-msg-details-icon" aria-hidden="true">▸</span><span class="btn-msg-details-label">Thinking &amp; tools</span></button>' : ''}
       <div class="msg-steps"></div>
       <div class="msg-meta">
         <time class="msg-time"></time>

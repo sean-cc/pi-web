@@ -299,6 +299,11 @@ const USD_TO_CNY = (() => {
 
 function normalizeUsage(usage) {
   if (!usage || typeof usage !== 'object') return null;
+  const currency = usage.currency || 'USD';
+  const cost = typeof usage.cost === 'number' ? usage.cost : Number(usage.cost?.total) || 0;
+  const costs = usage.costs && typeof usage.costs === 'object'
+    ? { ...usage.costs }
+    : { [currency]: cost };
   return {
     input: Number(usage.input) || 0,
     output: Number(usage.output) || 0,
@@ -306,7 +311,11 @@ function normalizeUsage(usage) {
     cacheWrite: Number(usage.cacheWrite) || 0,
     reasoning: Number(usage.reasoning) || 0,
     totalTokens: Number(usage.totalTokens) || 0,
-    cost: typeof usage.cost === 'number' ? usage.cost : Number(usage.cost?.total) || 0,
+    cost,
+    currency,
+    costs,
+    priceSource: usage.priceSource || '',
+    pricePeriod: usage.pricePeriod || '',
   };
 }
 
@@ -315,6 +324,11 @@ function mergeUsage(existing, next) {
   const b = normalizeUsage(next);
   if (!a) return b;
   if (!b) return a;
+  const costs = { ...a.costs };
+  for (const [currency, value] of Object.entries(b.costs)) {
+    costs[currency] = (costs[currency] || 0) + (Number(value) || 0);
+  }
+  const currency = a.currency || b.currency || 'USD';
   return {
     input: a.input + b.input,
     output: a.output + b.output,
@@ -322,7 +336,11 @@ function mergeUsage(existing, next) {
     cacheWrite: a.cacheWrite + b.cacheWrite,
     reasoning: a.reasoning + b.reasoning,
     totalTokens: a.totalTokens + b.totalTokens,
-    cost: a.cost + b.cost,
+    cost: costs[currency] ?? 0,
+    currency,
+    costs,
+    priceSource: a.priceSource === b.priceSource ? a.priceSource : '',
+    pricePeriod: a.pricePeriod === b.pricePeriod ? a.pricePeriod : '',
   };
 }
 
@@ -344,29 +362,65 @@ function formatTokenCount(value) {
   return String(number);
 }
 
-function formatCost(value) {
-  const usd = Number(value) || 0;
-  if (usd <= 0) return '';
-  const cny = usd * USD_TO_CNY;
-  if (cny < 0.01) return `≈¥${cny.toFixed(4)}`;
-  if (cny < 1) return `≈¥${cny.toFixed(3)}`;
-  return `≈¥${cny.toFixed(2)}`;
+const CURRENCY_SYMBOLS = { USD: '$', CNY: '¥', EUR: '€', GBP: '£', JPY: 'JP¥' };
+
+// Show the vendor's own currency: prices from DeepSeek/OpenRouter are USD, and
+// a CNY-priced provider must stay in CNY instead of being converted. The fixed
+// USD/CNY rate is only used for the estimated conversion in the tooltip.
+function formatCost(value, currency = 'USD') {
+  const amount = Number(value) || 0;
+  if (amount <= 0) return '';
+  const symbol = CURRENCY_SYMBOLS[currency] || `${currency} `;
+  if (amount >= 100) return `${symbol}${amount.toFixed(0)}`;
+  if (amount >= 1) return `${symbol}${amount.toFixed(2)}`;
+  if (amount >= 0.01) return `${symbol}${amount.toFixed(3)}`;
+  if (amount >= 0.001) return `${symbol}${amount.toFixed(4)}`;
+  return `${symbol}${amount.toFixed(5)}`;
+}
+
+function formatUsageCost(usage) {
+  if (!usage) return '';
+  const costs = usage.costs && typeof usage.costs === 'object'
+    ? usage.costs
+    : { [usage.currency || 'USD']: usage.cost };
+  return Object.entries(costs)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([currency, value]) => formatCost(value, currency))
+    .join(' · ');
 }
 
 function formatUsageLabel(usage) {
   if (!usage) return '';
   const tokens = `↑${formatTokenCount(usage.input)} ↓${formatTokenCount(usage.output)}`;
-  const cost = formatCost(usage.cost);
+  const cost = formatUsageCost(usage);
   return cost ? `${tokens} · ${cost}` : tokens;
 }
 
 function formatUsageTitle(usage) {
   if (!usage) return '';
-  const usd = usage.cost || 0;
-  const cost = usd > 0
-    ? `≈¥${(usd * USD_TO_CNY).toFixed(4)} (USD $${usd.toFixed(6)}, rate ${USD_TO_CNY})`
-    : '¥0.00';
-  return `input ${usage.input.toLocaleString()} · output ${usage.output.toLocaleString()} · cache read ${usage.cacheRead.toLocaleString()} · cache write ${usage.cacheWrite.toLocaleString()} · cost ${cost}`;
+  const costs = usage.costs && typeof usage.costs === 'object'
+    ? usage.costs
+    : { [usage.currency || 'USD']: usage.cost };
+  const costText = Object.entries(costs)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([currency, value]) => {
+      const amount = Number(value) || 0;
+      const symbol = CURRENCY_SYMBOLS[currency] || '';
+      const base = symbol
+        ? `${symbol}${amount.toFixed(6)} ${currency}`
+        : `${currency} ${amount.toFixed(6)}`;
+      if (currency === 'USD') {
+        return `${base} (≈¥${(amount * USD_TO_CNY).toFixed(4)} at ${USD_TO_CNY})`;
+      }
+      return base;
+    })
+    .join(' / ') || '—';
+  const source = usage.priceSource && usage.priceSource !== 'local'
+    ? `price: ${usage.priceSource}${usage.pricePeriod ? ` (${usage.pricePeriod})` : ''}`
+    : usage.priceSource === 'local'
+      ? 'price: local models.json / SDK'
+      : 'price: mixed sources';
+  return `input ${usage.input.toLocaleString()} · output ${usage.output.toLocaleString()} · cache read ${usage.cacheRead.toLocaleString()} · cache write ${usage.cacheWrite.toLocaleString()} · cost ${costText} · ${source}`;
 }
 
 function updateMessageMeta(el) {
@@ -400,7 +454,7 @@ function updateSidebarUsage() {
     sidebarUsage.classList.add('hidden');
     return;
   }
-  const cost = formatCost(usage.cost);
+  const cost = formatUsageCost(usage);
   sidebarUsage.textContent = `↑${formatTokenCount(usage.input)} ↓${formatTokenCount(usage.output)}${cost ? ` · ${cost}` : ''}`;
   sidebarUsage.title = `Session totals — ${formatUsageTitle(usage)}`;
   sidebarUsage.classList.remove('hidden');
@@ -479,6 +533,7 @@ function appendMessage(msg) {
     attachCodeCopyHandlers(step);
     updateMessageCopyButton(last);
     updateMessageMeta(last);
+    refreshMessageDetails(last);
     if (!stickToBottom) markNewOutput();
     scrollToBottom();
     return last;
@@ -492,6 +547,13 @@ function appendMessage(msg) {
   attachCodeCopyHandlers(el);
   updateMessageCopyButton(el);
   updateMessageMeta(el);
+  refreshMessageDetails(el);
+
+  const detailsBtn = el.querySelector('.btn-msg-details');
+  detailsBtn?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleMessageDetails(el);
+  });
 
   const editBtn = el.querySelector('.msg-edit-btn');
   if (editBtn) {
@@ -718,6 +780,81 @@ window.toggleToolBlock = function (headerOrBody) {
   ruler?.markOffsetsDirty();
 };
 
+// ── Per-reply details toggle (thinking / tool calls) ─────────────────────
+// Every assistant reply owns a button that hides just its own reasoning and
+// tool output. A live reply stays expanded; it collapses when the turn ends.
+
+function stepHasAnswer(step) {
+  const answer = step.querySelector('.msg-answer');
+  if (answer && answer.textContent.trim()) return true;
+  if (step.querySelector('.msg-attachments')) return true;
+  for (const child of step.children) {
+    if (child.classList.contains('thinking-block') ||
+        child.classList.contains('tool-block') ||
+        child.classList.contains('msg-answer') ||
+        child.classList.contains('working-indicator')) {
+      continue;
+    }
+    if (child.textContent.trim()) return true;
+  }
+  return false;
+}
+
+// Hide steps that contain nothing but reasoning/tool calls, and move the step
+// separator to the first visible step so collapsing does not leave stray lines.
+function syncMessageSteps(msgEl) {
+  if (!msgEl?.classList.contains('msg-assistant')) return;
+  const collapsed = msgEl.classList.contains('details-collapsed');
+  let firstVisible = true;
+  msgEl.querySelectorAll('.msg-step').forEach((step) => {
+    const detailsOnly = collapsed && !stepHasAnswer(step);
+    step.classList.toggle('details-only-step', detailsOnly);
+    step.classList.toggle('step-first-visible', !detailsOnly && firstVisible);
+    if (!detailsOnly) firstVisible = false;
+  });
+}
+
+function updateMessageDetailsButton(msgEl) {
+  const btn = msgEl?.querySelector('.btn-msg-details');
+  if (!btn) return;
+  const count = msgEl.querySelectorAll('.thinking-block, .tool-block').length;
+  btn.classList.toggle('hidden', count === 0);
+  const collapsed = msgEl.classList.contains('details-collapsed');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.title = collapsed ? 'Show thinking and tool calls' : 'Hide thinking and tool calls';
+  const label = btn.querySelector('.btn-msg-details-label');
+  if (label) {
+    label.textContent = `${collapsed ? 'Show' : 'Hide'} thinking & tools · ${count} step${count === 1 ? '' : 's'}`;
+  }
+}
+
+function refreshMessageDetails(msgEl) {
+  updateMessageDetailsButton(msgEl);
+  syncMessageSteps(msgEl);
+}
+
+function setMessageDetailsCollapsed(msgEl, collapsed) {
+  if (!msgEl?.classList.contains('msg-assistant')) return;
+  msgEl.classList.toggle('details-collapsed', collapsed);
+
+  // Expanding a reply shows its details immediately instead of making the
+  // reader open every single block again.
+  if (!collapsed) {
+    msgEl.querySelectorAll('.thinking-block, .tool-block').forEach((block) => {
+      block.querySelector('.thinking-header, .tool-header')?.classList.add('open');
+      block.querySelector('.thinking-body, .tool-body')?.classList.add('open');
+    });
+  }
+
+  refreshMessageDetails(msgEl);
+  ruler?.markOffsetsDirty();
+  if (stickToBottom) scrollToBottom();
+}
+
+function toggleMessageDetails(msgEl) {
+  setMessageDetailsCollapsed(msgEl, !msgEl.classList.contains('details-collapsed'));
+}
+
 // ── Session management ────────────────────────────────────────────────────
 
 async function loadSessionList() {
@@ -767,6 +904,14 @@ window.switchSession = async function (sid) {
     await loadSessionList();
     setStreaming(state.isStreaming);
     if (state.isStreaming) {
+      // Reattached to a turn that is still running: keep its details open so
+      // the reasoning/tools stay followable, matching a live send.
+      const lastMsg = state.messages[state.messages.length - 1];
+      const groups = $$('.msg-assistant:not(.msg-working-placeholder)');
+      const lastGroup = groups[groups.length - 1];
+      if (lastMsg?.role === 'assistant' && lastGroup) {
+        setMessageDetailsCollapsed(lastGroup, false);
+      }
       showNotice('This session is still generating. It will refresh when finished.');
       appendWorkingMessage();
       startSessionPoll(state.sessionId);
@@ -884,50 +1029,63 @@ async function loadModelInfo() {
 // ── Message rendering ─────────────────────────────────────────────────────
 
 function captureMessageOpenState() {
-  const state = new Map();
+  const tools = new Map();
+  const thinking = new Map();
+  const groups = new Map();
 
   $$('.msg', chatMessages).forEach(msgEl => {
     const msgId = msgEl.dataset.id;
     if (!msgId) return;
+
+    if (msgEl.classList.contains('msg-assistant')) {
+      groups.set(msgId, msgEl.classList.contains('details-collapsed'));
+    }
 
     msgEl.querySelectorAll('.tool-block').forEach(block => {
       const toolId = block.dataset.toolId;
       if (!toolId) return;
-      state.set(`tool:${msgId}:${toolId}`, !!block.querySelector('.tool-body')?.classList.contains('open'));
+      tools.set(`tool:${msgId}:${toolId}`, !!block.querySelector('.tool-body')?.classList.contains('open'));
     });
 
     msgEl.querySelectorAll('.thinking-block').forEach((block, index) => {
-      state.set(`thinking:${msgId}:${index}`, !!block.querySelector('.thinking-body')?.classList.contains('open'));
+      thinking.set(`thinking:${msgId}:${index}`, !!block.querySelector('.thinking-body')?.classList.contains('open'));
     });
   });
 
-  return state;
+  return { tools, thinking, groups };
 }
 
 function restoreMessageOpenState(state) {
-  if (!state.size) return;
+  if (!state) return;
+  const { tools, thinking, groups } = state;
 
   $$('.msg', chatMessages).forEach(msgEl => {
     const msgId = msgEl.dataset.id;
     if (!msgId) return;
 
+    if (groups?.has(msgId)) {
+      msgEl.classList.toggle('details-collapsed', groups.get(msgId));
+    }
+
     msgEl.querySelectorAll('.tool-block').forEach(block => {
       const toolId = block.dataset.toolId;
       const key = `tool:${msgId}:${toolId}`;
-      if (!toolId || !state.has(key)) return;
-      const open = state.get(key);
+      if (!toolId || !tools.has(key)) return;
+      const open = tools.get(key);
       block.querySelector('.tool-header')?.classList.toggle('open', open);
       block.querySelector('.tool-body')?.classList.toggle('open', open);
     });
 
     msgEl.querySelectorAll('.thinking-block').forEach((block, index) => {
       const key = `thinking:${msgId}:${index}`;
-      if (!state.has(key)) return;
-      const open = state.get(key);
+      if (!thinking.has(key)) return;
+      const open = thinking.get(key);
       block.querySelector('.thinking-header')?.classList.toggle('open', open);
       block.querySelector('.thinking-body')?.classList.toggle('open', open);
     });
   });
+
+  $$('.msg-assistant', chatMessages).forEach(msgEl => refreshMessageDetails(msgEl));
 }
 
 function renderAllMessages({ forceScroll = true } = {}) {
@@ -1091,6 +1249,9 @@ async function sendPrompt(message, options = {}) {
   };
   state.messages.push(assistantMsg);
   const assistantEl = appendMessage(assistantMsg);
+  // A reply that is being generated stays expanded so thinking and tool calls
+  // can be followed live. It collapses automatically when the turn ends.
+  setMessageDetailsCollapsed(assistantEl, false);
   const msgContentEl = $('.msg-content', assistantEl);
 
   // Keep the streamed content in its own container so the Working indicator
@@ -1228,6 +1389,10 @@ async function sendPrompt(message, options = {}) {
         contentEl.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
         workingEl.remove();
       }
+
+      // The turn is over: fold the reasoning and tool output away so the
+      // transcript reads as a plain question/answer log.
+      setMessageDetailsCollapsed(assistantEl, true);
     }
 
     await loadSessionList();
@@ -1277,6 +1442,7 @@ function handleSSEEvent(type, data, ctx) {
       ctx.thinkingBlockEl = block;
       ctx.thinkingBodyEl = block.querySelector('.thinking-body');
       ctx.activeThinkingText = '';
+      refreshMessageDetails(ctx.assistantEl);
       scrollToBottom();
       break;
     }
@@ -1325,6 +1491,7 @@ function handleSSEEvent(type, data, ctx) {
         isError: false,
         el: block,
       });
+      refreshMessageDetails(ctx.assistantEl);
       scrollToBottom();
       break;
     }
@@ -1539,7 +1706,9 @@ function updateAssistantContent(contentEl, ctx) {
     }
   }
 
-  html += renderMarkdown(ctx.currentText);
+  html += ctx.currentText
+    ? `<div class="msg-answer">${renderMarkdown(ctx.currentText)}</div>`
+    : '';
   html += '<span class="streaming-cursor"></span>';
 
   // Remember which tool bodies the user expanded/collapsed before the rebuild.
@@ -1583,6 +1752,7 @@ function updateAssistantContent(contentEl, ctx) {
     });
   });
 
+  refreshMessageDetails(contentEl.closest('.msg'));
   scrollToBottom();
 }
 

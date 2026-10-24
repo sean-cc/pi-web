@@ -6,6 +6,14 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as piSdk from '@earendil-works/pi-coding-agent';
+import {
+  endpointKey,
+  getPriceStatus,
+  hasPriceAdapter,
+  loadPriceCache,
+  refreshOfficialPrices,
+  resolveUsageCost,
+} from './prices.js';
 
 const {
   ModelRegistry,
@@ -94,6 +102,11 @@ if (typeof piSdk.ModelRuntime === 'function') {
 
 let modelRegistryMtime = modelsFileMtime();
 let modelRefreshPromise = null;
+
+// Vendor prices (per million tokens) cached per call endpoint. The cache is
+// loaded synchronously so the first request already gets last session's
+// prices; network checks run in the background at startup.
+loadPriceCache();
 
 // models.json can change while the web server is running (new cloud models,
 // capability fixes, etc.). Reload when the file's mtime changes so the
@@ -323,9 +336,50 @@ function extractToolOutput(result) {
   }
 }
 
+// Every model is priced by the endpoint it is actually called through. A model
+// routed to api.deepseek.com uses DeepSeek's official prices; a model routed to
+// a proxy uses that provider's own models.json cost.
+function endpointForMessage(message) {
+  const provider = message?.provider;
+  if (!provider) return null;
+  for (const modelId of [message?.responseModel, message?.model]) {
+    if (!modelId) continue;
+    try {
+      const model = modelRegistry.find(provider, modelId);
+      const key = endpointKey(model?.baseUrl);
+      if (key) return key;
+    } catch {}
+  }
+  return null;
+}
+
+// Endpoint -> model ids, so per-model adapters (Aliyun docs pages) know which
+// pages to fetch.
+function priceEndpoints() {
+  const endpoints = new Map();
+  for (const model of modelRegistry.getAvailable()) {
+    const key = endpointKey(model?.baseUrl);
+    if (!key) continue;
+    if (!endpoints.has(key)) endpoints.set(key, new Set());
+    endpoints.get(key).add(model.id);
+  }
+  return endpoints;
+}
+
 // Convert AgentMessage to a frontend-friendly format
-function formatUsage(usage) {
+function formatUsage(usage, message = null) {
   if (!usage || typeof usage !== 'object') return null;
+  const endpoint = endpointForMessage(message);
+  // Prefer the model actually used, but fall back to the requested id when a
+  // provider appends a dated suffix that the price table does not carry.
+  const official = endpoint
+    ? resolveUsageCost(
+      usage,
+      endpoint,
+      [message?.responseModel, message?.model].filter(Boolean),
+      message?.timestamp ?? null,
+    )
+    : null;
   return {
     input: Number(usage.input) || 0,
     output: Number(usage.output) || 0,
@@ -333,9 +387,12 @@ function formatUsage(usage) {
     cacheWrite: Number(usage.cacheWrite) || 0,
     reasoning: Number(usage.reasoning) || 0,
     totalTokens: Number(usage.totalTokens) || 0,
-    cost: typeof usage.cost === 'number'
+    cost: official ? official.cost : (typeof usage.cost === 'number'
       ? usage.cost
-      : Number(usage.cost?.total) || 0,
+      : Number(usage.cost?.total) || 0),
+    currency: official?.currency || 'USD',
+    priceSource: official?.source || 'local',
+    pricePeriod: official?.period || null,
   };
 }
 
@@ -405,7 +462,7 @@ function formatMessages(messages, entryIdByMessage = null) {
       toolCalls,
       thinking: thinking.trim(),
       images,
-      usage: formatUsage(msg.usage),
+      usage: formatUsage(msg.usage, msg),
       timestamp: msg.timestamp || new Date().toISOString(),
     });
   }
@@ -486,6 +543,12 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJSON(res, 500, { error: err.message });
     }
+    return;
+  }
+
+  // ── API: Official price status ──────────────────────────────────────
+  if (p === '/api/prices' && req.method === 'GET') {
+    sendJSON(res, 200, getPriceStatus());
     return;
   }
 
@@ -956,7 +1019,7 @@ const server = http.createServer(async (req, res) => {
 
         case 'message_end':
           send('message_end', {
-            usage: formatUsage(event.message?.usage),
+            usage: formatUsage(event.message?.usage, event.message),
             timestamp: event.message?.timestamp || null,
           });
           break;
@@ -1082,6 +1145,24 @@ const server = http.createServer(async (req, res) => {
   // ── Static files / SPA fallback ──────────────────────────────────────
   serveStatic(res, p);
 });
+
+// Start the vendor price check before accepting requests. Requests that arrive
+// while it runs use the previous cache (or the SDK price when there is no
+// cache); successful checks are persisted as they complete.
+if (getPriceStatus().enabled) {
+  const endpoints = new Map([...priceEndpoints()].filter(([endpoint]) => hasPriceAdapter(endpoint)));
+  if (endpoints.size > 0) {
+    console.log(`  Updating vendor prices for ${endpoints.size} endpoint(s)…`);
+    void refreshOfficialPrices(endpoints)
+      .then((status) => {
+        if (status.lastError) {
+          console.warn(`  ⚠️  Some vendor prices were unavailable, keeping cached/local prices: ${status.lastError}`);
+        }
+        console.log(`  Prices: ${status.models} models across ${status.endpoints} endpoints (checked ${status.updatedAt})`);
+      })
+      .catch((err) => console.warn(`  ⚠️  Price refresh failed: ${err.message}`));
+  }
+}
 
 server.listen(PORT, HOST, () => {
   const displayHost = HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST;

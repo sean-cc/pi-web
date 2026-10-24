@@ -16,11 +16,13 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node scripts/start.mjs",
+    "dev": "node scripts/start.mjs --watch",
     "smoke": "node scripts/smoke.mjs",
-    "start:awake": "caffeinate -ims node server.js",
-    "setup": "node scripts/setup.mjs"
+    "test:prices": "node --test scripts/prices-test.mjs",
+    "start:awake": "caffeinate -ims node scripts/start.mjs",
+    "setup": "node scripts/setup.mjs",
+    "test:sdk": "node --test scripts/start-test.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.4.0"

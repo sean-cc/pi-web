@@ -310,6 +310,8 @@ async function browserTests() {
   const assistant = { id: 'smoke_assistant', role: 'assistant', content: '', toolCalls: [], thinking: '', timestamp: new Date().toISOString() };
   state.messages.push(assistant);
   const assistantEl = appendMessage(assistant);
+  // sendPrompt expands a live reply right after appending it.
+  assistantEl.querySelector('.btn-msg-details')?.click();
   const contentEl = document.createElement('div');
   contentEl.className = 'msg-stream';
   assistantEl.querySelector('.msg-steps').appendChild(contentEl);
@@ -373,6 +375,54 @@ async function browserTests() {
   check('new thinking block keeps its own text', lastThinkingText === 'second thought', lastThinkingText);
   check('text stream follows the bottom', api.stickToBottom && distanceToBottom() <= 2, `dist=${distanceToBottom()}`);
 
+  // ── Per-reply details toggle: hide this reply's reasoning and tools ────
+  const detailsBtn = assistantEl.querySelector('.btn-msg-details');
+  const liveThinkingEl = thinkingBlocks[thinkingBlocks.length - 1];
+  const liveToolEl = contentEl.querySelector('.tool-block[data-tool-id="tool_smoke"]');
+  const visible = element => element && getComputedStyle(element).display !== 'none';
+  check(
+    'reply details button is shown while streaming',
+    Boolean(detailsBtn) &&
+      !detailsBtn.classList.contains('hidden') &&
+      detailsBtn.getAttribute('aria-expanded') === 'true' &&
+      detailsBtn.textContent.includes('3 steps'),
+    detailsBtn?.textContent,
+  );
+  detailsBtn.click();
+  await wait(60);
+  check(
+    'reply details button hides thinking and tool blocks',
+    assistantEl.classList.contains('details-collapsed') &&
+      !visible(liveThinkingEl) &&
+      !visible(liveToolEl) &&
+      detailsBtn.getAttribute('aria-expanded') === 'false' &&
+      detailsBtn.textContent.includes('Show thinking'),
+    `${detailsBtn.className} aria=${detailsBtn.getAttribute('aria-expanded')}`,
+  );
+  check(
+    'collapsed reply keeps its answer text',
+    visible(contentEl.querySelector('.msg-answer p')),
+    contentEl.querySelector('.msg-answer p')?.textContent?.slice(0, 40),
+  );
+  const detailsOnlySteps = [...assistantEl.querySelectorAll('.msg-step.details-only-step')];
+  check(
+    'collapsed reply hides details-only steps',
+    detailsOnlySteps.every(step => getComputedStyle(step).display === 'none'),
+    [...assistantEl.querySelectorAll('.msg-step')]
+      .map(step => `${step.className}=${getComputedStyle(step).display}`)
+      .join(' || '),
+  );
+  detailsBtn.click();
+  await wait(60);
+  check(
+    'reply details button restores thinking and tool blocks',
+    !assistantEl.classList.contains('details-collapsed') &&
+      visible(liveThinkingEl) &&
+      visible(liveToolEl) &&
+      detailsBtn.getAttribute('aria-expanded') === 'true',
+    `${detailsBtn.className} aria=${detailsBtn.getAttribute('aria-expanded')}`,
+  );
+
   handleSSEEvent('message_end', {
     usage: { input: 120, output: 30, cacheRead: 1000, cacheWrite: 0, totalTokens: 1150, cost: { total: 0.0012 } },
     timestamp: '2026-01-02T03:04:05.000Z',
@@ -431,20 +481,40 @@ async function browserTests() {
   );
 
   // ── Full re-render preserves expanded blocks ─────────────────────────────
-  state.messages = [{
-    id: 'persist',
-    role: 'assistant',
-    content: 'done',
-    thinking: 'some reasoning',
-    toolCalls: [{ id: 'persist-tool', name: 'bash', input: { command: 'x' }, result: 'ok', isError: false }],
-    timestamp: new Date().toISOString(),
-  }];
+  state.messages = [
+    {
+      id: 'persist',
+      role: 'assistant',
+      content: '',
+      thinking: 'some reasoning',
+      toolCalls: [{ id: 'persist-tool', name: 'bash', input: { command: 'x' }, result: 'ok', isError: false }],
+      timestamp: new Date().toISOString(),
+    },
+    {
+      id: 'persist_tail',
+      role: 'assistant',
+      content: 'done',
+      thinking: '',
+      toolCalls: [],
+      timestamp: new Date().toISOString(),
+    },
+  ];
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
   api.renderAllMessages();
   await wait(80);
   const persistMsg = document.querySelector('.msg[data-id="persist"]');
   const persistTool = persistMsg?.querySelector('.tool-block');
   const persistThinking = persistMsg?.querySelector('.thinking-block');
+  const persistSteps = [...(persistMsg?.querySelectorAll('.msg-step') || [])];
+  check(
+    'collapsed multi-step reply hides details-only steps',
+    persistSteps.length === 2 &&
+      persistSteps[0].classList.contains('details-only-step') &&
+      getComputedStyle(persistSteps[0]).display === 'none' &&
+      getComputedStyle(persistSteps[1]).display !== 'none' &&
+      getComputedStyle(persistSteps[1]).borderTopWidth === '0px',
+    `steps=${persistSteps.length} border=${persistSteps[1] ? getComputedStyle(persistSteps[1]).borderTopWidth : 'n/a'}`,
+  );
   toggleToolBlock(persistTool.querySelector('.tool-header'));
   toggleToolBlock(persistThinking.querySelector('.thinking-body'));
   api.renderAllMessages({ forceScroll: false });
@@ -557,10 +627,10 @@ async function browserTests() {
     `buttons=${groupEl.querySelectorAll('.msg-copy-btn').length}`,
   );
   check(
-    'grouped reply sums token usage in CNY',
+    'grouped reply sums token usage',
     (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↑150') &&
       (groupEl.querySelector('.msg-usage')?.textContent || '').includes('↓15') &&
-      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('≈¥'),
+      (groupEl.querySelector('.msg-usage')?.textContent || '').includes('$0.0015'),
     groupEl.querySelector('.msg-usage')?.textContent,
   );
   check(
@@ -568,6 +638,20 @@ async function browserTests() {
     /\d{1,2}:\d{2}/.test(groupEl.querySelector('.msg-time')?.textContent || ''),
     groupEl.querySelector('.msg-time')?.textContent,
   );
+
+  const cnyMsg = {
+    id: 'cny_usage', role: 'assistant', content: 'priced in CNY',
+    usage: { input: 1000, output: 1000, cost: 2.5, currency: 'CNY' },
+    timestamp: new Date().toISOString(),
+  };
+  const cnyEl = api.appendMessage(cnyMsg);
+  await wait(20);
+  check(
+    'usage keeps the vendor currency',
+    (cnyEl.querySelector('.msg-usage')?.textContent || '').includes('¥2.50'),
+    cnyEl.querySelector('.msg-usage')?.textContent,
+  );
+  cnyEl.remove();
 
   api.state.messages = [];
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
@@ -742,6 +826,45 @@ async function browserTests() {
 
   api.state.messages = [];
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
+
+  // ── Finished replies collapse their details automatically ────────────────
+  const collapseFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    if (String(url).includes('/prompt')) {
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode([
+            'event: thinking_start', 'data: {}', '',
+            'event: thinking', 'data: {"delta":"pondering"}', '',
+            'event: tool_start', 'data: {"toolCallId":"auto_tool","toolName":"bash","input":{"command":"ls"}}', '',
+            'event: tool_end', 'data: {"toolCallId":"auto_tool","isError":false,"output":"ok"}', '',
+            'event: text', 'data: {"delta":"auto answer"}', '',
+            'event: done', 'data: {}', '',
+          ].join('\n') + '\n'));
+          controller.close();
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return collapseFetch(url, opts);
+  };
+  api.state.isStreaming = false;
+  api.state.pendingAttachments = [];
+  api.state.uploading = 0;
+  await api.sendPrompt('auto collapse test');
+  await wait(150);
+  window.fetch = collapseFetch;
+  const autoReply = [...document.querySelectorAll('.msg-assistant')].at(-1);
+  const autoBtn = autoReply?.querySelector('.btn-msg-details');
+  check(
+    'finished replies collapse their details automatically',
+    Boolean(autoReply?.classList.contains('details-collapsed')) &&
+      autoBtn?.getAttribute('aria-expanded') === 'false' &&
+      Boolean(autoReply.querySelector('.tool-block')) &&
+      !visible(autoReply.querySelector('.tool-block')) &&
+      autoReply.querySelector('.msg-answer')?.textContent.includes('auto answer'),
+    autoReply?.className,
+  );
 
   // ── Mid-stream disconnect recovery ───────────────────────────────────────
   const realFetch = window.fetch;

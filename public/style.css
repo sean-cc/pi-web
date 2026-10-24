@@ -539,6 +539,52 @@ body {
   padding-top: 12px;
   border-top: 1px solid var(--border-light);
 }
+/* After a details-only step is hidden, the next visible step becomes the first
+   one and must not keep the separator it inherited from the DOM order. */
+.msg-assistant .msg-step.step-first-visible {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* ── Per-reply reasoning / tool-call toggle ─────────────────────────────── */
+.btn-msg-details {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: 11.5px/1.5 var(--font-sans);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.btn-msg-details:hover,
+.btn-msg-details:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+.btn-msg-details-icon {
+  display: inline-block;
+  font-size: 9px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+.btn-msg-details[aria-expanded="true"] .btn-msg-details-icon {
+  transform: rotate(90deg);
+}
+
+/* Collapsed reply: only the answer text stays visible. */
+.msg-assistant.details-collapsed .thinking-block,
+.msg-assistant.details-collapsed .tool-block,
+.msg-assistant.details-collapsed .msg-step.details-only-step {
+  display: none;
+}
 
 .msg-meta {
   display: flex;
