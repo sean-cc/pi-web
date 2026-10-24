@@ -666,7 +666,16 @@ const server = http.createServer(async (req, res) => {
 
       let sessionId;
       if (target.parentId) {
-        const branchPath = manager.createBranchedSession(target.parentId);
+        // createBranchedSession mutates the manager it is called on. Use a
+        // separate manager opened from the same file so the live original
+        // session keeps its current leaf and full history.
+        const sessionFile = manager.getSessionFile();
+        if (!sessionFile) {
+          sendJSON(res, 500, { error: 'Session has no file to branch from' });
+          return;
+        }
+        const branchSource = SessionManager.open(sessionFile);
+        const branchPath = branchSource.createBranchedSession(target.parentId);
         if (!branchPath) {
           sendJSON(res, 500, { error: 'Could not create a branch' });
           return;

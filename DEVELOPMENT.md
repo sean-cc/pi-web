@@ -51,7 +51,7 @@ pi-web/
 ## Architecture Notes
 
 - `server.js` wraps the pi SDK and exposes a small JSON/SSE API. It supports both the 0.x `AuthStorage` API and the 1.x `ModelRuntime` API.
-- Session messages are formatted with stable session-entry IDs. The frontend uses those IDs to branch from an earlier user message when editing/resending.
+- Session messages are formatted with stable session-entry IDs. The frontend uses those IDs to branch from an earlier user message when editing/resending. The branch endpoint opens a separate `SessionManager` from the same file before calling `createBranchedSession`, because that API moves the manager's current leaf.
 - `public/sse.js` buffers partial SSE events across network chunks; never parse event lines before the block is complete.
 - `public/ruler.js` lays out one tick per user prompt, keeps a minimum visual gap, and switches to a scrolling window when prompts overflow.
 - Assistant steps are grouped under one avatar and one copy/usage footer. The grouping key is the first assistant message ID for the group.
