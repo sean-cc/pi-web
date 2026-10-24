@@ -4,6 +4,14 @@
   "description": "Web workspace for pi coding agent",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sean-cc/pi-web.git"
+  },
+  "homepage": "https://github.com/sean-cc/pi-web#readme",
+  "bugs": {
+    "url": "https://github.com/sean-cc/pi-web/issues"
+  },
   "engines": {
     "node": ">=22.19.0"
   },

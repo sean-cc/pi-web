@@ -22,7 +22,7 @@ pi Web is a browser workspace for [pi coding agent](https://github.com/earendil-
 ## Install and run
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/sean-cc/pi-web.git
 cd pi-web
 npm install --ignore-scripts
 npm run setup

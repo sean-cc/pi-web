@@ -22,7 +22,7 @@ pi Web 是 [pi coding agent](https://github.com/earendil-works/pi-coding-agent) 
 ## 安装和启动
 
 ```bash
-git clone <你的仓库地址>
+git clone https://github.com/sean-cc/pi-web.git
 cd pi-web
 npm install --ignore-scripts
 npm run setup
