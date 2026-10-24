@@ -1000,7 +1000,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const displayHost = HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST;
-  console.log(`\n  🚀 pi Web UI running at http://${displayHost}:${PORT}\n`);
+  console.log(`\n  🚀 pi Web running at http://${displayHost}:${PORT}\n`);
   console.log(`  Listening on: ${HOST}:${PORT}`);
   console.log(`  Sessions directory: ${CWD}\n`);
 

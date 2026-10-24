@@ -1,6 +1,6 @@
-# pi Web UI
+# pi Web
 
-A web interface for [pi coding agent](https://github.com/earendil-works/pi-coding-agent), inspired by OpenAI's design.
+A local web workspace for [pi coding agent](https://github.com/earendil-works/pi-coding-agent): streaming chat, sessions, tools, a conversation timeline and token accounting.
 
 ## Features
 
@@ -77,7 +77,7 @@ Credentials are read from `~/.pi/agent/auth.json`.
 ## Project Structure
 
 ```text
-piWeb/
+pi-web/
 ├── server.js          # Node.js backend (built-in http module)
 ├── scripts/
 │   └── smoke.mjs      # Headless Chrome smoke test (npm run smoke)
@@ -156,7 +156,7 @@ npm install --ignore-scripts @earendil-works/pi-coding-agent@0.80.3
 
 ## Smoke Test
 
-An end-to-end UI smoke test is included. It starts a temporary stub server and
+An end-to-end smoke test is included. It starts a temporary stub server and
 headless Chrome, then checks SSE chunk parsing, markdown escaping, grouping,
 copy, retry, streaming follow, read-history freeze, the jump button and the
 conversation ruler.
