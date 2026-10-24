@@ -1,5 +1,7 @@
 # pi Web
 
+English | [简体中文](README.zh-CN.md)
+
 A web workspace for [pi coding agent](https://github.com/earendil-works/pi-coding-agent): streaming chat, sessions, tools, a conversation timeline and token accounting.
 
 ## Features
@@ -91,6 +93,8 @@ pi-web/
 │   ├── util.js        # Small formatting helpers
 │   ├── style.css      # Theme and layout
 │   └── table-test.html
+├── README.md
+├── README.zh-CN.md
 ├── LICENSE
 └── package.json
 ```
