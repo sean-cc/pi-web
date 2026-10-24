@@ -11,7 +11,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "smoke": "node scripts/smoke.mjs",
-    "start:awake": "caffeinate -ims node server.js"
+    "start:awake": "caffeinate -ims node server.js",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.4.0"
