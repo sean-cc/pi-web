@@ -4,35 +4,55 @@ A web interface for [pi coding agent](https://github.com/earendil-works/pi-codin
 
 ## Features
 
-- 🎨 OpenAI-style dark theme
-- 💬 Real-time streaming responses via SSE
-- 🔧 Tool call visualization (read, write, edit, bash, etc.)
-- 💭 Thinking block display
-- 📁 Session management (create, switch, delete)
-- ⚡ Slash-command palette — type `/` for commands, models, skills and prompt templates
-- 📝 Markdown rendering with code blocks
-- 📱 Responsive layout
-- 🚫 Zero external frontend dependencies
+- Real-time streaming responses over SSE, including thinking blocks and tool calls
+- Conversation timeline on the right: one tick per user prompt, hover previews, click/drag navigation and keyboard support
+- Sticky reading: scrolling up stops auto-follow; a jump-to-latest button shows new output and resumes following
+- Automatic recovery when a stream disconnects mid-task
+- Grouped assistant steps: one avatar and one copy button per reply
+- Per-reply timestamps, input/output token counts and estimated CNY cost, plus session totals
+- Message copy, code-block copy and retry for rejected prompts
+- Markdown rendering with HTML escaping, tables and code blocks
+- Session management, slash commands, model picker and attachments
+- Optional macOS keep-awake during long agent tasks
+
+## Requirements
+
+- Node.js **22.19+**
+- A supported provider API key, or credentials already stored by the pi CLI
+- Chrome/Chromium for `npm run smoke` (not required to run the app)
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-npm install
+npm install --ignore-scripts
 
-# Set your API key
+# Set a provider API key, or run `pi /login` first
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Start the server
+# Start the server (binds 127.0.0.1 by default)
 npm start
 
 # Open http://localhost:3000
 ```
 
-Or use a custom port:
+Custom port:
 
 ```bash
 PORT=8080 npm start
+```
+
+## Security
+
+The server binds to `127.0.0.1` by default and does not send wildcard CORS
+headers. It has **no authentication** and can execute agent tools, so do not
+expose it directly to the internet.
+
+For remote access, put it behind a reverse proxy with authentication and TLS, or
+use a private tunnel. To listen on all interfaces on a trusted network:
+
+```bash
+HOST=0.0.0.0 npm start
 ```
 
 ## Configure API Key
@@ -46,45 +66,48 @@ Set one of these environment variables before starting:
 | Google Gemini | `GEMINI_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
 
-Or authenticate via pi CLI first:
+Or authenticate with the pi CLI first:
 
 ```bash
 pi /login
 ```
 
-This stores credentials in `~/.pi/agent/auth.json` which pi Web UI will use automatically.
+Credentials are read from `~/.pi/agent/auth.json`.
 
 ## Project Structure
 
-```
+```text
 piWeb/
-├── server.js          # Node.js backend (pure http module)
+├── server.js          # Node.js backend (built-in http module)
 ├── scripts/
 │   └── smoke.mjs      # Headless Chrome smoke test (npm run smoke)
 ├── public/
 │   ├── index.html     # HTML shell
-│   ├── style.css      # OpenAI-inspired dark theme
-│   └── app.js         # Frontend logic (vanilla JS)
+│   ├── app.js         # App wiring, sessions, streaming orchestration
+│   ├── ruler.js       # Conversation timeline
+│   ├── messages.js    # Message/attachment HTML rendering
+│   ├── markdown.js    # Markdown renderer
+│   ├── sse.js         # SSE event parser
+│   ├── util.js        # Small formatting helpers
+│   ├── style.css      # Theme and layout
+│   └── table-test.html
+├── LICENSE
 └── package.json
 ```
 
 ## Keep Awake During Long Tasks
 
 On macOS, the server automatically holds a `caffeinate` assertion while a prompt
-stream is active, so an idle Mac does not suspend the agent mid-task:
+stream is active, so an idle Mac does not suspend the agent mid-task.
 
-```bash
-npm start
-```
-
-To keep the whole server awake instead (not just active prompts):
+To keep the whole server awake instead:
 
 ```bash
 npm run start:awake
 # equivalent to: caffeinate -ims node server.js
 ```
 
-Or wrap the CLI agent directly:
+Or wrap the CLI directly:
 
 ```bash
 caffeinate -i pi "long task..."
@@ -93,9 +116,20 @@ caffeinate -i pi "long task..."
 Disable the automatic behavior with `PI_WEB_KEEP_AWAKE=0`.
 
 **Lid closed:** `caffeinate` cannot prevent sleep when the MacBook lid is closed
-unless it is in clamshell mode (power connected + external display, depending on
-the model). For tasks that must survive a closed lid or travel, run pi on an
-always-on remote machine.
+unless it is in clamshell mode (power connected + external display). For tasks
+that must survive a closed lid, run pi on an always-on remote machine.
+
+## Token Usage and Cost
+
+Token usage comes from the provider's reported usage on each assistant message.
+Costs are shown in CNY as an estimate using a configurable rate (default 7.2):
+
+```js
+// In the browser console, then refresh:
+localStorage.setItem('pi-web-usd-cny', '7.30')
+```
+
+Providers bill in USD; the CNY amount is an estimate, not an invoice.
 
 ## Upgrading the pi SDK
 
@@ -114,9 +148,6 @@ node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').
 npm start
 ```
 
-On macOS, use `npm run start:awake` if you want the server to stay awake.
-The current 1.x line requires Node.js 22.19 or newer.
-
 To roll back:
 
 ```bash
@@ -125,13 +156,14 @@ npm install --ignore-scripts @earendil-works/pi-coding-agent@0.80.3
 
 ## Smoke Test
 
-A small end-to-end UI smoke test is included (requires Chrome/Chromium and Node 22+):
+An end-to-end UI smoke test is included. It starts a temporary stub server and
+headless Chrome, then checks SSE chunk parsing, markdown escaping, grouping,
+copy, retry, streaming follow, read-history freeze, the jump button and the
+conversation ruler.
 
 ```bash
 npm run smoke
 ```
-
-It starts a temporary stub server and headless Chrome, then checks SSE chunk parsing, markdown escaping, thinking/tool streaming follow, read-history freeze, jump-to-latest, and the conversation ruler.
 
 ## API Endpoints
 
@@ -150,6 +182,10 @@ It starts a temporary stub server and headless Chrome, then checks SSE chunk par
 ## Tech Stack
 
 - **Backend**: Node.js built-in `http` module + `@earendil-works/pi-coding-agent` SDK
-- **Frontend**: Vanilla HTML/CSS/JS (zero dependencies)
+- **Frontend**: Vanilla HTML/CSS/JS (zero runtime frontend dependencies)
 - **Streaming**: Server-Sent Events (SSE)
 - **Sessions**: pi's built-in session tree (JSONL files)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

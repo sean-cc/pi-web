@@ -4,3 +4,7 @@ node_modules/
 *.log
 .env
 figures/
+MEMORY.md
+game_jobs_2026.md
+output/
+tmp/

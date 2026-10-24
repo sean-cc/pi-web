@@ -16,6 +16,7 @@ const {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 const CWD = process.cwd();
 
 // Uploaded attachments live inside the agent's working directory so the model
@@ -435,17 +436,9 @@ async function openSession(sessionPath) {
 // ── Router ─────────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
+  // The UI and API are same-origin. Do not add wildcard CORS headers here:
+  // this server has no authentication and should not be callable by arbitrary
+  // websites. Put a reverse proxy in front for cross-origin/remote use.
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const p = url.pathname;
 
@@ -1005,7 +998,13 @@ const server = http.createServer(async (req, res) => {
   serveStatic(res, p);
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🚀 pi Web UI running at http://localhost:${PORT}\n`);
+server.listen(PORT, HOST, () => {
+  const displayHost = HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST;
+  console.log(`\n  🚀 pi Web UI running at http://${displayHost}:${PORT}\n`);
+  console.log(`  Listening on: ${HOST}:${PORT}`);
   console.log(`  Sessions directory: ${CWD}\n`);
+
+  if (HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1') {
+    console.warn('  ⚠️  No authentication is enabled. Use a trusted network or a reverse proxy.\n');
+  }
 });
