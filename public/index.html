@@ -17,6 +17,7 @@
         </svg>
         <span>New chat</span>
       </button>
+      <button class="sidebar-close" id="btnSidebarClose" type="button" aria-label="Close menu">✕</button>
     </div>
     <div class="sidebar-sessions" id="sessionList">
       <!-- Sessions loaded dynamically -->
@@ -34,6 +35,7 @@
       </button>
     </div>
   </aside>
+  <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
   <!-- Model selector modal -->
   <div class="modal-overlay hidden" id="modelModal">
@@ -66,6 +68,17 @@
 
   <!-- Main chat area -->
   <main class="chat">
+    <div class="mobile-topbar">
+      <button class="btn-sidebar-toggle" id="btnSidebarToggle" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+      <span class="mobile-title">pi Web</span>
+    </div>
+
     <!-- Messages -->
     <div class="chat-body">
       <div class="chat-messages" id="chatMessages">

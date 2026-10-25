@@ -74,6 +74,10 @@ const attachmentTray = $('#attachmentTray');
 const fileInput = $('#fileInput');
 const btnAttach = $('#btnAttach');
 const chatInputContainer = $('#chatInputContainer');
+const sidebar = $('#sidebar');
+const btnSidebarToggle = $('#btnSidebarToggle');
+const btnSidebarClose = $('#btnSidebarClose');
+const sidebarBackdrop = $('#sidebarBackdrop');
 const editBanner = $('#editBanner');
 const btnCancelEdit = $('#btnCancelEdit');
 const slashMenu = $('#slashMenu');
@@ -288,6 +292,18 @@ function showNotice(message) {
   chatMessages.appendChild(div);
   scrollToBottom();
   setTimeout(() => div.remove(), 9000);
+}
+
+function openSidebar() {
+  sidebar.classList.add('open');
+  sidebarBackdrop.classList.remove('hidden');
+  btnSidebarToggle?.setAttribute('aria-expanded', 'true');
+}
+
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  sidebarBackdrop.classList.add('hidden');
+  btnSidebarToggle?.setAttribute('aria-expanded', 'false');
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────
@@ -903,6 +919,7 @@ function renderSessionList(sessions) {
 
 window.switchSession = async function (sid) {
   if (sid === state.sessionId) return;
+  closeSidebar();
   state.editing = null;
   renderEditBanner();
   try {
@@ -959,6 +976,7 @@ window.deleteSession = async function (e, sid) {
 };
 
 async function createNewSession() {
+  closeSidebar();
   state.editing = null;
   renderEditBanner();
   try {
@@ -2520,6 +2538,15 @@ btnAbort.addEventListener('click', async () => {
 
 $('#btnThemeToggle').addEventListener('click', toggleTheme);
 btnCancelEdit?.addEventListener('click', cancelEdit);
+btnSidebarToggle?.addEventListener('click', openSidebar);
+btnSidebarClose?.addEventListener('click', closeSidebar);
+sidebarBackdrop?.addEventListener('click', closeSidebar);
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 900) closeSidebar();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar();
+});
 
 // Model selector
 $('#btnModelSelector').addEventListener('click', openModelSelector);
