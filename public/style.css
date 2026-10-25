@@ -43,6 +43,7 @@
   --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
   --font-size: 15px;
   --line-height: 1.6;
+  --chat-max-width: 900px;
 }
 
 html, body {
@@ -432,7 +433,10 @@ body {
 
 /* ── Messages ───────────────────────────────────────────────────────────── */
 .msg {
-  padding: 20px calc((100vw - 780px) / 2);
+  padding-top: 20px;
+  padding-bottom: 20px;
+  padding-left: max(24px, calc((100% - var(--chat-max-width)) / 2));
+  padding-right: max(60px, calc((100% - var(--chat-max-width)) / 2));
   display: flex;
   gap: 16px;
   animation: fadeIn 0.2s ease;
@@ -923,7 +927,10 @@ body {
 
 /* ── Input Area ─────────────────────────────────────────────────────────── */
 .chat-input-area {
-  padding: 12px calc((100vw - 780px) / 2) 20px;
+  padding-top: 12px;
+  padding-bottom: 20px;
+  padding-left: max(24px, calc((100% - var(--chat-max-width)) / 2));
+  padding-right: max(60px, calc((100% - var(--chat-max-width)) / 2));
 }
 
 .edit-banner {
@@ -1689,10 +1696,10 @@ body {
     transform: translateX(0);
   }
   .msg {
-    padding: 16px 20px;
+    padding: 16px 28px 16px 20px;
   }
   .chat-input-area {
-    padding: 12px 16px 20px;
+    padding: 12px 20px 20px;
   }
   .attachment-copy { max-width: 120px; }
   .msg-attachment.image { max-width: 190px; }
