@@ -124,11 +124,11 @@ async function main() {
         let update = mode === 'auto';
         const interactive = process.stdin.isTTY && process.stdout.isTTY;
         if (!update && interactive) {
-          const answer = await ask(`\n  pi SDK ${current} → ${latest} 可用。现在更新并启动? [y/N] `);
+          const answer = await ask(`\n  pi SDK ${current} → ${latest} is available. Update now and start? [y/N] `);
           update = /^y(es)?$/i.test(answer);
         } else if (!update) {
-          console.log(`\n  pi SDK ${current} → ${latest} 可用（非交互启动，未自动更新）`);
-          console.log(`  手动更新: npm install --ignore-scripts ${PACKAGE}@latest\n`);
+          console.log(`\n  pi SDK ${current} → ${latest} is available (non-interactive start, not updated automatically)`);
+          console.log(`  To update manually: npm install --ignore-scripts ${PACKAGE}@latest\n`);
         }
 
         if (update) {
