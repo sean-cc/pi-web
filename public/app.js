@@ -38,6 +38,7 @@ const state = {
   commands: null,        // slash commands for the current session
   commandsSessionId: null,
   modelsData: null,      // cached /api/models response
+  modelCollapsedProviders: null, // Set of provider ids hidden in the picker
   sessionPickerSessions: [],
   slash: {
     open: false,
@@ -2577,19 +2578,33 @@ async function loadModels() {
 
 function renderModelList(data) {
   if (data) state.modelsData = data;
+  const modelData = data || state.modelsData;
   const container = $('#modelList');
-  if (!data || !data.grouped || Object.keys(data.grouped).length === 0) {
+  if (!modelData || !modelData.grouped || Object.keys(modelData.grouped).length === 0) {
     container.innerHTML = '<div class="modal-error">No models available. Configure API keys first.</div>';
     return;
   }
 
-  let html = '';
-  const providers = Object.keys(data.grouped).sort();
+  const scrollTop = container.scrollTop;
+  const collapsed = state.modelCollapsedProviders instanceof Set
+    ? state.modelCollapsedProviders
+    : new Set();
 
-  for (const provider of providers) {
-    const models = data.grouped[provider];
-    html += `<div class="model-provider-group">`;
-    html += `<div class="model-provider-name">${escapeHtml(provider)}</div>`;
+  let html = '';
+  const providers = Object.keys(modelData.grouped).sort();
+
+  providers.forEach((provider, index) => {
+    const models = modelData.grouped[provider];
+    const isCollapsed = collapsed.has(provider);
+    const groupId = `model-provider-${index}`;
+    html += `<div class="model-provider-group${isCollapsed ? ' collapsed' : ''}">`;
+    html += `
+      <button class="model-provider-header" type="button" onclick="toggleModelProvider('${escapeHtml(provider)}')" aria-expanded="${isCollapsed ? 'false' : 'true'}" aria-controls="${groupId}">
+        <span class="model-provider-name">${escapeHtml(provider)}</span>
+        <span class="model-provider-count">${models.length}</span>
+        <span class="model-provider-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="model-provider-models${isCollapsed ? ' hidden' : ''}" id="${groupId}">`;
     for (const m of models) {
       const isActive = (state.currentModel && state.currentModel.provider === provider && state.currentModel.id === m.id);
       const activeClass = isActive ? ' active' : '';
@@ -2602,11 +2617,24 @@ function renderModelList(data) {
           ${isActive ? '<span class="model-active-badge">✓</span>' : ''}
         </div>`;
     }
-    html += '</div>';
-  }
+    html += '</div></div>';
+  });
 
   container.innerHTML = html;
+  container.scrollTop = scrollTop;
 }
+
+window.toggleModelProvider = function (provider) {
+  if (!(state.modelCollapsedProviders instanceof Set)) {
+    state.modelCollapsedProviders = new Set();
+  }
+  if (state.modelCollapsedProviders.has(provider)) {
+    state.modelCollapsedProviders.delete(provider);
+  } else {
+    state.modelCollapsedProviders.add(provider);
+  }
+  renderModelList();
+};
 
 async function openModelSelector() {
   const modal = $('#modelModal');
@@ -2615,6 +2643,13 @@ async function openModelSelector() {
   modal.classList.remove('hidden');
 
   const data = await loadModels();
+  const providers = Object.keys(data?.grouped || {});
+  const activeProvider = state.currentModel?.provider;
+  if (activeProvider && providers.includes(activeProvider)) {
+    state.modelCollapsedProviders = new Set(providers.filter(provider => provider !== activeProvider));
+  } else {
+    state.modelCollapsedProviders = new Set();
+  }
   renderModelList(data);
 }
 
@@ -2655,6 +2690,7 @@ window.__piWeb = {
   stopSessionPoll,
   createSSEParser,
   renderMarkdown,
+  renderModelList,
   escapeHtml,
   get stickToBottom() { return stickToBottom; },
   ruler,

@@ -81,11 +81,21 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/sessions/smoke' && req.method === 'GET') {
     return sendJson(res, smokeSession);
   }
+  if (url.pathname === '/api/sessions/smoke/status') {
+    return sendJson(res, { sessionId: 'smoke', isStreaming: false });
+  }
   if (url.pathname === '/api/commands') {
     return sendJson(res, { commands: [] });
   }
   if (url.pathname === '/api/models') {
-    return sendJson(res, { models: [] });
+    return sendJson(res, {
+      models: 3,
+      grouped: {
+        smoke: [{ id: 'smoke-model', name: 'Smoke Model', reasoning: false, input: ['text'] }],
+        other: [{ id: 'other-model', name: 'Other Model', reasoning: true, input: ['text'] }],
+        third: [{ id: 'third-model', name: 'Third Model', reasoning: false, input: ['text'] }],
+      },
+    });
   }
   if (url.pathname.startsWith('/api/')) {
     return sendJson(res, { error: 'not found' }, 404);
@@ -672,6 +682,35 @@ async function browserTests() {
   api.state.messages = [];
   document.querySelectorAll('#chatMessages > *').forEach(element => element.remove());
 
+  // ── Model picker collapses non-current providers ─────────────────────────
+  document.querySelector('#btnModelSelector')?.click();
+  await wait(150);
+  const providerGroups = [...document.querySelectorAll('#modelList .model-provider-group')];
+  const smokeGroup = providerGroups.find(group => group.querySelector('.model-provider-name')?.textContent === 'smoke');
+  const otherGroup = providerGroups.find(group => group.querySelector('.model-provider-name')?.textContent === 'other');
+  const thirdGroup = providerGroups.find(group => group.querySelector('.model-provider-name')?.textContent === 'third');
+  check(
+    'model picker expands only the current provider',
+    Boolean(smokeGroup) &&
+      !smokeGroup.classList.contains('collapsed') &&
+      otherGroup?.classList.contains('collapsed') &&
+      thirdGroup?.classList.contains('collapsed') &&
+      otherGroup?.querySelector('.model-provider-models')?.classList.contains('hidden'),
+    providerGroups.map(group => group.querySelector('.model-provider-name')?.textContent + ':' + group.classList.contains('collapsed')).join(','),
+  );
+  otherGroup?.querySelector('.model-provider-header')?.click();
+  await wait(30);
+  const otherGroupAfter = [...document.querySelectorAll('#modelList .model-provider-group')]
+    .find(group => group.querySelector('.model-provider-name')?.textContent === 'other');
+  check(
+    'model picker provider can be expanded',
+    !otherGroupAfter?.classList.contains('collapsed') &&
+      !otherGroupAfter?.querySelector('.model-provider-models')?.classList.contains('hidden') &&
+      otherGroupAfter?.querySelectorAll('.model-item').length === 1,
+    otherGroupAfter?.className,
+  );
+  document.querySelector('#btnModalClose')?.click();
+
   // ── Edit and resend a historical user message ────────────────────────────
   const editMsg = {
     id: 'edit_test', entryId: 'entry_edit', role: 'user', content: 'editable text',
@@ -899,7 +938,7 @@ async function browserTests() {
   check(
     'empty session restores the welcome screen',
     Boolean(document.querySelector('#chatMessages .welcome')),
-    document.querySelector('#chatMessages')?.className,
+    `session=${api.state.sessionId} messages=${api.state.messages.length} children=${document.querySelector('#chatMessages')?.children.length} html=${(document.querySelector('#chatMessages')?.innerHTML || '').slice(0, 80)}`,
   );
 
   return results;
