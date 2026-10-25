@@ -660,6 +660,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── API: Is this session still generating? ──────────────────────────
+  // A few bytes, so a client whose prompt stream has gone quiet can ask
+  // repeatedly without pulling the whole transcript (which can be megabytes).
+  const statusMatch = p.match(/^\/api\/sessions\/([^/]+)\/status$/);
+  if (statusMatch && req.method === 'GET') {
+    try {
+      const entry = activeSessions.get(statusMatch[1]);
+      if (entry) {
+        res.setHeader('Cache-Control', 'no-store');
+        sendJSON(res, 200, { sessionId: entry.session.sessionId, isStreaming: entry.session.isStreaming });
+        return;
+      }
+      // A turn only runs inside a session this process has open, so a session
+      // that is not loaded here is not generating. Confirm the id exists so a
+      // stale one gets a 404 instead of a hopeful false.
+      const sessions = await SessionManager.list(CWD);
+      if (!sessions.some(s => s.id === statusMatch[1])) {
+        sendJSON(res, 404, { error: 'Session not found' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { sessionId: statusMatch[1], isStreaming: false });
+    } catch (err) {
+      sendJSON(res, 500, { error: err.message });
+    }
+    return;
+  }
+
   // ── API: Get session info ────────────────────────────────────────────
   const sessionMatch = p.match(/^\/api\/sessions\/([^/]+)$/);
   if (sessionMatch && req.method === 'GET') {

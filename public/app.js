@@ -28,7 +28,8 @@ function toggleTheme() {
 const state = {
   sessionId: null,
   currentModel: null,    // { provider, id, name }
-  currentStream: null,   // AbortController for fetch
+  currentStream: null,   // AbortController for this page's own turn
+  streamSid: null,       // session id of this page's own turn
   isStreaming: false,
   messages: [],          // { id, role, content, toolCalls, thinking, images, timestamp }
   editing: null,         // { sessionId, entryId, previousValue } for edit-and-resend
@@ -94,7 +95,9 @@ async function api(method, path, body) {
   const res = await fetch(path, opts);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const error = new Error(err.error || `HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
   }
   return res;
 }
@@ -102,6 +105,20 @@ async function api(method, path, body) {
 async function apiJSON(method, path, body) {
   const res = await api(method, path, body);
   return res.json();
+}
+
+// Is this session still generating? The dedicated endpoint answers in a few
+// bytes; a server older than that route answers with the whole transcript
+// (or with index.html for an unknown path), so fall back to the full call
+// and keep the same shape. A 404 is rethrown: the session is gone.
+async function sessionStatus(sid) {
+  try {
+    const data = await apiJSON('GET', `/api/sessions/${sid}/status`);
+    if (typeof data?.isStreaming === 'boolean') return data;
+  } catch (err) {
+    if (err.status === 404) throw err;
+  }
+  return apiJSON('GET', `/api/sessions/${sid}`);
 }
 
 // ── Attachments ───────────────────────────────────────────────────────────
@@ -1125,6 +1142,18 @@ function renderAllMessages({ forceScroll = true } = {}) {
 
 // ── Streaming ─────────────────────────────────────────────────────────────
 
+// How long a prompt stream may go silent before we ask the server whether the
+// turn is actually over. A long tool call is silent too, so this only checks
+// the session; it never cancels a running turn.
+const STREAM_STALL_MS = Number(window.__piStreamStallMs) > 0 ? Number(window.__piStreamStallMs) : 45000;
+let liveStreamCheck = null;
+
+document.addEventListener('visibilitychange', () => {
+  // A background tab can stop draining a response for a long time. On return,
+  // check at once instead of waiting out another stall window.
+  if (document.visibilityState === 'visible') liveStreamCheck?.(true);
+});
+
 function setStreaming(streaming) {
   state.isStreaming = streaming;
   btnSend.classList.toggle('hidden', streaming);
@@ -1154,20 +1183,30 @@ function startSessionPoll(sid) {
       return;
     }
     try {
-      const data = await apiJSON('GET', `/api/sessions/${sid}`);
+      // One second apart, so poll the few-byte status and only pull the
+      // transcript once the turn is over.
+      const status = await sessionStatus(sid);
       if (state.sessionId !== sid) {
         stopSessionPoll();
         return;
       }
-      if (!data.isStreaming) {
+      if (status.isStreaming) return;
+      stopSessionPoll();
+      const data = await apiJSON('GET', `/api/sessions/${sid}`);
+      if (state.sessionId !== sid) return;
+      state.messages = data.messages || [];
+      renderAllMessages({ forceScroll: false });
+      setStreaming(false);
+      await loadSessionList();
+    } catch (err) {
+      // A deleted session will never finish: stop instead of polling forever.
+      if (err.status === 404) {
         stopSessionPoll();
-        state.messages = data.messages || [];
-        renderAllMessages({ forceScroll: false });
         setStreaming(false);
         await loadSessionList();
+        return;
       }
-    } catch {
-      // Transient fetch failures should not freeze the UI; keep polling.
+      // Other transient failures should not freeze the UI; keep polling.
     }
   }, 1000);
 }
@@ -1280,6 +1319,12 @@ async function sendPrompt(message, options = {}) {
 
   scrollToBottom();
 
+  // One controller per turn, so a stalled socket can be dropped from the
+  // watchdog (and the abort button has something to fall back on).
+  const controller = new AbortController();
+  state.currentStream = controller;
+  state.streamSid = sid;
+
   let streamCtx = null;
   let requestStarted = false;
   let responseStarted = false;
@@ -1287,88 +1332,24 @@ async function sendPrompt(message, options = {}) {
   let recoverAfterDisconnect = false;
   let removeOptimistic = false;
 
-  try {
-    requestStarted = true;
-    const res = await fetch(`/api/sessions/${sid}/prompt`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: modelMessage, images }),
-    });
+  let streamSeenAt = Date.now();
+  let settled = false;
+  let watchdog = 0;
 
-    if (!res.ok) {
-      httpError = true;
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
+  // The turn is over. This is called from the `done` event as well as from the
+  // end of the response, because a long turn can finish server-side while the
+  // last bytes of this response never arrive: a background tab or a throttled
+  // socket stops draining it, so waiting only for EOF left the composer
+  // disabled forever even though the session was complete.
+  function settleTurn() {
+    if (settled) return;
+    settled = true;
+    clearInterval(watchdog);
+    if (liveStreamCheck === checkStalled) liveStreamCheck = null;
+    if (state.sessionId !== sid || recoverAfterDisconnect) return;
 
-    responseStarted = true;
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    streamCtx = {
-      sessionId: sid,
-      contentEl, assistantEl, assistantMsg, userMsg, workingEl,
-      get currentText() { return currentText; },
-      set currentText(v) { currentText = v; },
-      get currentThinking() { return currentThinking; },
-      set currentThinking(v) { currentThinking = v; },
-      get activeThinkingText() { return activeThinkingText; },
-      set activeThinkingText(v) { activeThinkingText = v; },
-      toolBlocks,
-      get thinkingBlockEl() { return thinkingBlockEl; },
-      set thinkingBlockEl(v) { thinkingBlockEl = v; },
-      get thinkingBodyEl() { return thinkingBodyEl; },
-      set thinkingBodyEl(v) { thinkingBodyEl = v; },
-      get activeToolBlock() { return activeToolBlock; },
-      set activeToolBlock(v) { activeToolBlock = v; },
-      get activeToolBody() { return activeToolBody; },
-      set activeToolBody(v) { activeToolBody = v; },
-    };
-    const parser = createSSEParser((type, data) => handleSSEEvent(type, data, streamCtx));
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parser.push(decoder.decode(value, { stream: true }));
-    }
-    parser.push(decoder.decode());
-    parser.end();
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      // User aborted
-      if (contentEl) {
-        contentEl.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
-      }
-    } else if (responseStarted || (requestStarted && !httpError)) {
-      // The response stream broke mid-task (sleep, Wi-Fi change, proxy), or
-      // the network failed before headers arrived. The agent may still be
-      // running server-side; keep the working UI and reconcile with the
-      // session once it finishes.
-      recoverAfterDisconnect = true;
-      showNotice(`Connection lost (${err.message}). Waiting for the session to finish…`);
-      startSessionPoll(sid);
-    } else {
-      // The server rejected the request before any stream started, so the
-      // optimistic user message was never persisted. Remove it instead of
-      // leaving a ghost message that disappears on the next reload.
-      removeOptimistic = true;
-      showError(err.message, () => sendPrompt(message, { attachments }));
-    }
-  } finally {
-    state.currentStream = null;
-
-    if (removeOptimistic && state.sessionId === sid) {
-      const removedIds = new Set([userMsg.id, assistantMsg.id]);
-      state.messages = state.messages.filter(msg => !removedIds.has(msg.id));
-      renderAllMessages({ forceScroll: false });
-      setStreaming(false);
-    }
-
-    // The user may have switched sessions while this stream was running. Only
-    // touch shared UI/state if this stream still owns the visible session and
-    // its DOM is still mounted.
-    if (state.sessionId === sid && assistantEl.isConnected && !recoverAfterDisconnect) {
+    if (assistantEl.isConnected) {
       if (streamCtx) flushAssistantContentRender(contentEl, streamCtx);
-      setStreaming(false);
 
       // Finalize assistant message in state
       const lastMsg = state.messages[state.messages.length - 1];
@@ -1385,14 +1366,140 @@ async function sendPrompt(message, options = {}) {
       }
 
       // Remove streaming cursor / working indicator
-      if (contentEl) {
-        contentEl.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
-        workingEl.remove();
-      }
+      contentEl?.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
+      workingEl.remove();
 
       // The turn is over: fold the reasoning and tool output away so the
       // transcript reads as a plain question/answer log.
       setMessageDetailsCollapsed(assistantEl, true);
+    }
+    setStreaming(false);
+  }
+
+  // A long tool call is silent too, so this never cancels a turn: it asks the
+  // server, and only recovers when the server says the turn is over.
+  async function checkStalled(force = false) {
+    if (settled || !responseStarted || recoverAfterDisconnect) return;
+    if (state.sessionId !== sid) return;
+    if (!force && Date.now() - streamSeenAt < STREAM_STALL_MS) return;
+    // Cheap status first: the transcript below can be megabytes.
+    const status = await sessionStatus(sid).catch(() => null);
+    if (!status || settled) return;
+    if (status.isStreaming) {
+      streamSeenAt = Date.now();
+      return;
+    }
+    const data = await apiJSON('GET', `/api/sessions/${sid}`).catch(() => null);
+    if (!data || settled) return;
+    settled = true;
+    clearInterval(watchdog);
+    if (liveStreamCheck === checkStalled) liveStreamCheck = null;
+    try { controller.abort(); } catch {}
+    if (state.sessionId !== sid) return;
+    // The server has the finished turn: show it instead of the half-streamed one.
+    state.messages = data.messages || [];
+    renderAllMessages({ forceScroll: false });
+    setStreaming(false);
+    await loadSessionList();
+    showNotice('The reply had already finished; it was recovered after the stream stalled.');
+  }
+
+  try {
+    requestStarted = true;
+    const res = await fetch(`/api/sessions/${sid}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: modelMessage, images }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      httpError = true;
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    responseStarted = true;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    streamSeenAt = Date.now();
+    watchdog = setInterval(() => checkStalled(), Math.max(2000, Math.round(STREAM_STALL_MS / 3)));
+    liveStreamCheck = checkStalled;
+
+    streamCtx = {
+      sessionId: sid,
+      contentEl, assistantEl, assistantMsg, userMsg, workingEl,
+      onDone: settleTurn,
+      get currentText() { return currentText; },
+      set currentText(v) { currentText = v; },
+      get currentThinking() { return currentThinking; },
+      set currentThinking(v) { currentThinking = v; },
+      get activeThinkingText() { return activeThinkingText; },
+      set activeThinkingText(v) { activeThinkingText = v; },
+      toolBlocks,
+      get thinkingBlockEl() { return thinkingBlockEl; },
+      set thinkingBlockEl(v) { thinkingBlockEl = v; },
+      get thinkingBodyEl() { return thinkingBodyEl; },
+      set thinkingBodyEl(v) { thinkingBodyEl = v; },
+      get activeToolBlock() { return activeToolBlock; },
+      set activeToolBlock(v) { activeToolBlock = v; },
+      get activeToolBody() { return activeToolBody; },
+      set activeToolBody(v) { activeToolBody = v; },
+    };
+    const parser = createSSEParser((type, data) => {
+      streamSeenAt = Date.now();
+      handleSSEEvent(type, data, streamCtx);
+    });
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      streamSeenAt = Date.now();
+      parser.push(decoder.decode(value, { stream: true }));
+    }
+    parser.push(decoder.decode());
+    parser.end();
+    settleTurn();
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      // User aborted, or the watchdog dropped a stalled socket.
+      contentEl?.querySelector('.streaming-cursor')?.classList.remove('streaming-cursor');
+    } else if (responseStarted || (requestStarted && !httpError)) {
+      // The response stream broke mid-task (sleep, Wi-Fi change, proxy), or
+      // the network failed before headers arrived. The agent may still be
+      // running server-side; keep the working UI and reconcile with the
+      // session once it finishes.
+      recoverAfterDisconnect = true;
+      showNotice(`Connection lost (${err.message}). Waiting for the session to finish…`);
+      startSessionPoll(sid);
+    } else {
+      // The server rejected the request before any stream started, so the
+      // optimistic user message was never persisted. Remove it instead of
+      // leaving a ghost message that disappears on the next reload.
+      removeOptimistic = true;
+      showError(err.message, () => sendPrompt(message, { attachments }));
+    }
+  } finally {
+    if (state.currentStream === controller) {
+      state.currentStream = null;
+      state.streamSid = null;
+    }
+
+    if (removeOptimistic && state.sessionId === sid) {
+      const removedIds = new Set([userMsg.id, assistantMsg.id]);
+      state.messages = state.messages.filter(msg => !removedIds.has(msg.id));
+      renderAllMessages({ forceScroll: false });
+      setStreaming(false);
+    }
+
+    // The user may have switched sessions while this stream was running. Only
+    // touch shared UI/state if this stream still owns the visible session.
+    settleTurn();
+    // A re-render can replace the assistant element mid-turn (a session
+    // reload); never leave the composer disabled because the node settleTurn()
+    // wanted to touch is gone.
+    if (state.sessionId === sid && !recoverAfterDisconnect && !removeOptimistic) {
+      setStreaming(false);
     }
 
     await loadSessionList();
@@ -1614,6 +1721,7 @@ function handleSSEEvent(type, data, ctx) {
 
     case 'done':
       hideWorking(ctx);
+      ctx.onDone?.();
       if (data.userEntryId && ctx.userMsg) {
         ctx.userMsg.entryId = data.userEntryId;
         refreshMessageEditButton(ctx.userMsg);
@@ -2440,8 +2548,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 async function startNewChat() {
-  if (state.isStreaming && state.sessionId) {
-    try { await api('POST', `/api/sessions/${state.sessionId}/abort`); } catch {}
+  // Only stop a turn this page started. A tab that merely attached to a turn
+  // another tab is running (state.isStreaming without a local stream) must
+  // leave it alone: clicking "New chat" there used to kill the other tab's task.
+  if (state.currentStream && state.streamSid) {
+    try { await api('POST', `/api/sessions/${state.streamSid}/abort`); } catch {}
   }
   state.messages = [];
   state.pendingAttachments = [];
